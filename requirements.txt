@@ -1,0 +1,12 @@
+# job-finder — discovery + orchestration dependencies only.
+# NOTE: scoring needs NO Python LLM library. Scoring runs in the AI CLI you
+# already have (Claude Code / Gemini / Codex / Qwen / OpenCode / Aider / ...).
+# This app holds no model API key for scoring. (See README "How scoring works".)
+
+requests>=2.31        # ATS + Google Jobs + Apify HTTP calls
+PyYAML>=6.0           # profile.yml + ats_tenants.india.yml
+
+# ── Optional resume parsing (only needed if your resume is .docx / .pdf) ────
+# Plain .txt / .md resumes need nothing extra.
+python-docx>=1.1      # .docx resumes
+pdfplumber>=0.11      # .pdf resumes

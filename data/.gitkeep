@@ -1,0 +1,2 @@
+# Keeps the user-layer data/ directory in git. Real result/feedback files here
+# are gitignored (see DATA_CONTRACT.md) — they are yours and stay local.

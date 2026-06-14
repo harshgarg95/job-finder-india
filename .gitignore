@@ -1,0 +1,29 @@
+# ── Secrets — never commit ────────────────────────────────────────────────
+.env
+*.key
+
+# ── User Layer (per DATA_CONTRACT.md) — personal data never leaves the machine
+# These are the user's own resume, profile, results, and feedback. The repo
+# ships only *.example templates; the real files stay local and untracked.
+config/profile.yml
+data/*
+!data/.gitkeep
+resume.txt
+resume.md
+resume.docx
+resume.pdf
+*_resume.*
+*_cache.txt
+
+# ── Python ────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# ── OS / editor ───────────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,94 @@
+# ─────────────────────────────────────────────────────────────────────────
+# job-finder profile — copy to config/profile.yml and edit. (User Layer:
+# never auto-updated, never uploaded. See DATA_CONTRACT.md.)
+#
+# This file makes scoring HONEST and specific to you. The fields marked
+# [GATE] feed the disqualifier checks in prompts/_rubric.md — they are how the
+# scorer knows your real seniority and function, so it can say a confident "no"
+# to wrong-level / wrong-function roles instead of spinning them.
+# ─────────────────────────────────────────────────────────────────────────
+
+candidate:
+  full_name: "Your Name"
+  location: "Bengaluru, India"
+  email: "you@example.com"
+
+# ── Seniority truth [GATE] ──────────────────────────────────────────────────
+# The scorer caps any job whose required experience is well above these.
+# Be honest. years_in_function is the one that matters most — total tenure does
+# not make you senior in a function you have done for two years.
+seniority:
+  years_total: 7              # all professional experience
+  years_in_function: 2.5      # years actually doing your TARGET function below
+  current_title: "AI Implementation Manager"
+  # The honest ceiling: the highest level you can credibly claim TODAY.
+  # one of: intern | junior | mid | senior | lead | manager | director
+  honest_ceiling: "manager"   # delivery/PM ceiling
+  honest_ceiling_ic: "mid"    # hands-on IC ceiling (often lower for switchers)
+
+# ── Function truth [GATE] ───────────────────────────────────────────────────
+# What you ACTUALLY do, day to day. The scorer treats a job hiring for a
+# different function as a disqualifier, even if the domain/skills overlap.
+# Distinguish clearly between adjacent functions (e.g. "AI delivery/PM" is NOT
+# "ML research engineer").
+function:
+  actual: "AI delivery / implementation / technical program management"
+  # Functions you can credibly do (right-fit). Keep this tight and honest.
+  in_scope:
+    - "AI implementation / delivery manager"
+    - "Technical program manager (AI/ML)"
+    - "AI product manager"
+    - "GenAI solutions / consulting delivery"
+  # Functions that are a stretch or wrong fit — list them so the scorer is
+  # explicit about WHY it says no, rather than vaguely.
+  out_of_scope:
+    - "ML research engineer / deep modelling"
+    - "Senior data scientist (statistical modelling)"
+    - "Backend/platform software engineer (years of prod coding)"
+
+# ── Target roles / archetypes ───────────────────────────────────────────────
+target_roles:
+  primary:
+    - "AI Implementation Manager"
+    - "AI Delivery Manager"
+    - "Technical Program Manager - AI"
+    - "AI Product Manager"
+  archetypes:
+    - name: "AI Delivery / Implementation Manager"
+      fit: "primary"        # primary = dream, secondary = good, adjacent = stretch
+    - name: "Technical / AI Program Manager"
+      fit: "primary"
+    - name: "AI Product Manager"
+      fit: "secondary"
+    - name: "GenAI Solutions Consultant"
+      fit: "secondary"
+    - name: "AI Engineer (applied, API/integration)"
+      fit: "adjacent"       # stretch — hands-on depth is the open question
+
+# ── Domains ─────────────────────────────────────────────────────────────────
+domains:
+  strong: ["Real estate / PropTech", "AEC / construction tech", "Enterprise operations"]
+  open_to: ["B2B SaaS", "Consulting", "GenAI products"]
+
+# ── Compensation (India) ────────────────────────────────────────────────────
+compensation:
+  current_ctc_lpa: 18         # current total, lakhs per annum
+  target_ctc_lpa: 28
+  floor_ctc_lpa: 20           # walk-away; jobs clearly below this are flagged
+  currency: "INR"
+
+# ── Location & logistics [GATE] ─────────────────────────────────────────────
+location:
+  base_city: "Hyderabad, India"
+  remote_ok: true
+  hybrid_ok: true
+  onsite_cities: ["Hyderabad", "Bengaluru"]   # onsite roles only acceptable here
+  willing_to_relocate: false
+  notice_period_days: 60
+
+# ── Hard constraints [GATE] — auto-disqualify when violated ─────────────────
+# Stated plainly so the scorer can cap a job that breaks one, with a citation.
+hard_constraints:
+  - "Must be India-based or fully remote (no relocation outside India)."
+  - "No roles requiring work authorization the candidate does not hold."
+  - "No pure research / PhD-required positions."
