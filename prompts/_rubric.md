@@ -102,18 +102,38 @@ out_of_scope`.
   `adjacent` → this is a genuine stretch; cap ~3.5 unless the resume shows direct
   evidence of doing that function.
 
-### Dimension 3 — Core requirements (must-haves)  `[GATE for hard ones]`
-List the JD's **must-have** requirements (not the nice-to-haves). For each, cite
-the resume evidence that meets it, or mark it unmet.
-- A "must-have" is something stated as required: a specific degree/credential,
-  a specific number of years in a named skill, a specific tool/stack as
-  mandatory, work authorization, on-site presence, language.
-- **CAP:** an unmet **hard** requirement that gates the role (work authorization,
-  required degree like "PhD required", mandatory security clearance, a named
-  must-have years-in-tech the candidate lacks) → **cap fit at 1.5**.
-- Unmet **soft** requirements lower the holistic score but do not hard-cap.
-- If the JD does not state a requirement, write "not stated" — do **not** assume
-  it is met, and do **not** invent it as unmet.
+### Dimension 3 — Core requirements (must-haves)  `[HARD GATE]`
+**Score the REQUIREMENTS, not the title.** A matching job title ("Program
+Manager", "Technical Program Manager", "AI Delivery Manager") does NOT mean the
+candidate meets the role's actual requirements. Read the JD's requirements
+section and extract EVERY explicit must-have — especially the **quantified and
+named** ones, which optimistic scorers skip right past:
+  - **"N years of [a SPECIFIC named skill / methodology / platform]"** — e.g.
+    "3 years Agile/Scrum/SAFe", "3 years AI/ML-platform program management",
+    "8 years software engineering", "5 years Java". General tenure does NOT
+    satisfy a *specific* skill-year requirement.
+  - **hands-on software development / coding** stated as a requirement (e.g.
+    "1 year software development", "must be able to code"),
+  - a specific **degree/field or certification** (CS/Engineering degree, PMP, …),
+  - work authorization, on-site city, language.
+For each, cite the resume evidence that meets it, or mark it **unmet**.
+
+- **These quantified/named must-haves are HARD gates, not soft preferences:**
+  - one unmet hard must-have (a required N-years-in-named-skill/methodology, or a
+    required hands-on capability the candidate doesn't have, e.g. software
+    development for a non-developer) → **cap fit at 2.5** (STRETCH at most);
+  - the role's core is built on it, OR two-plus are unmet → **cap fit at 1.5**
+    (DON'T APPLY).
+  - a required CS/Engineering degree the candidate lacks, required work
+    authorization, mandatory clearance, or "PhD required" → **cap at 1.5**.
+- Genuinely-soft "nice to have" items lower the score modestly, no cap.
+- If the JD does not state a requirement, write "not stated" — do not assume it
+  met, and do not invent it unmet.
+
+> **The optimism trap to avoid here:** seeing "Program Manager + AI + right city"
+> and scoring APPLY while a real applicant would be auto-rejected by "requires
+> 3 yrs SAFe", "8 yrs software engineering", or "1 yr software development" that
+> the resume doesn't show. Those buried lines decide the application — gate on them.
 
 ### Dimension 4 — Domain fit (weight by how much the ROLE depends on domain fluency)
 Judge a domain gap by how much the role's **core work requires reasoning about

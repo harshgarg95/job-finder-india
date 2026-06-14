@@ -318,3 +318,41 @@ left out; old project untouched).
   transient; consider switching arg-delivery adapters to stdin/temp-file. Logged.
 
 Discovery is now genuinely useful for a Hyderabad seeker. Still pre-Phase-3.
+
+---
+
+## Gate review — feedback round 2 (the analysis gap)
+
+**Date:** 2026-06-14. Owner read the full JDs of the top-3 APPLY picks and showed
+all three were actually unsuitable — D.E. Shaw (needs CS degree + 1yr software
+dev), Southwest (3yrs AI/ML-platform TPM + 3yrs SAFe + CS degree), TriNet (8yrs
+SWE/TPM + deep agile scrum). My scorer rated them 4.1–4.8 APPLY. Two real,
+generic gaps found:
+
+### Gap A — truncated JD (data completeness)
+Google Jobs/SerpAPI often returns a short *snippet*, not the full JD. D.E. Shaw's
+was 1,810 chars with ZERO mention of the degree/dev requirements — the scorer
+never saw them. Fixes:
+- `discovery/job_fetcher.py`: deep-fetch the full JD from the verified page;
+  **Playwright headless fallback** for JS-rendered career pages (Chromium cached);
+  enrich threshold raised to 4,000 chars (D.E. Shaw's 1,810 snippet was being
+  skipped). Wired into `score.py` (enrich before scoring). LinkedIn/Naukri stay
+  snippet-only (bot-blocked) → covered by the safety-net below.
+
+### Gap B — scoring the TITLE, not the REQUIREMENTS (rubric rigor)
+Southwest/TriNet had the requirements in-text, but the scorer matched the title
+("Technical Program Manager + AI + Hyderabad") and ignored "3yrs SAFe / 8yrs
+SWE". Fixes to `prompts/_rubric.md` Dimension 3 + `score-job.md` (generic):
+- "**Score the requirements, not the title.**" Extract every quantified/named
+  must-have (N years in a SPECIFIC skill/methodology/platform, hands-on software
+  development, CS degree, certs) and HARD-gate the unmet ones: one → cap 2.5; core
+  or two-plus → cap 1.5; required degree/work-auth → cap 1.5.
+- **Incomplete-JD safety net:** if the JD text is a thin snippet (can't confirm
+  must-haves), never output APPLY — cap STRETCH and flag for direct verification.
+
+### Re-validated (deep-fetch + stricter rubric, live gemini)
+- D.E. Shaw: snippet 1,810 → **8,109 chars deep-fetched** → 4.6 APPLY → **1.5
+  DON'T APPLY** (cites unmet CS-degree requirement).
+- Southwest: 4.4 APPLY → **1.5 DON'T APPLY** (CS degree + 3yrs AI/ML TPM unmet).
+- TriNet: 4.1 APPLY → **1.5 DON'T APPLY** (8yrs SWE/TPM + deep agile scrum unmet).
+All three now match the owner's expert read. Tests 10/10.

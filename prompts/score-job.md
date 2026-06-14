@@ -57,6 +57,15 @@ and the exact output shape.
   be ≤ 2.0.
 - An unmet **hard** must-have (work authorization, required degree, mandatory
   named-tech years, on-site city the candidate won't move to) MUST cap at ≤ 1.5.
+- **Score the requirements, not the title.** Extract every quantified/named
+  must-have ("3 yrs SAFe", "8 yrs software engineering", "1 yr software
+  development", "CS degree") and gate on the unmet ones — a matching title is not
+  a matching candidate.
+- **Incomplete-JD safety net:** if the job text is short or clearly a truncated
+  snippet (no requirements/qualifications section, well under a real posting), you
+  CANNOT confirm the must-haves — do **NOT** output APPLY. Cap at **STRETCH** and
+  say in the headline that the full JD was unavailable and the requirements need
+  direct verification.
 - `headline` must read like an honest human verdict, e.g. *"DON'T APPLY — this is
   a hands-on ML engineering role (JD: 'build and train production models, 5+ yrs
   PyTorch'); the candidate is an AI delivery/PM lead (resume: 'scoped and managed

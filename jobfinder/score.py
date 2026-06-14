@@ -17,6 +17,7 @@ import os
 import yaml
 
 from . import cli_adapter
+from .discovery import job_fetcher
 from .resume import load_resume
 from .schema import JobPosting
 
@@ -68,7 +69,12 @@ def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_
 
     print(f"\n── Scoring {len(jobs)} jobs via your AI CLI "
           f"({cli or os.environ.get('JOBFINDER_CLI') or 'auto-detect'}) ──")
+    enriched = 0
     for i, job in enumerate(jobs, 1):
+        # Deep-fetch the full JD if we only have a thin snippet (so the scorer
+        # sees buried gating requirements, not a summary).
+        if job_fetcher.enrich(job):
+            enriched += 1
         prompt = build_prompt(resume_text, profile, job)
         try:
             verdict = cli_adapter.score(prompt, cli=cli)
@@ -81,6 +87,8 @@ def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_
         if i % 10 == 0:
             print(f"   scored {i}/{len(jobs)} (failures so far: {len(failures)})")
 
+    if enriched:
+        print(f"   (deep-fetched the full JD for {enriched} thin-snippet listings)")
     if not scored:
         print(f"\n✗ Scoring produced 0 results from {len(jobs)} jobs — BREAKAGE, not an honest empty.")
         for f in failures[:3]:
