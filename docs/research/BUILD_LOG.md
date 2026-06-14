@@ -247,3 +247,51 @@ HighRadius is the only Hyderabad-HQ one; zero remote delivery roles). Broadening
 discovery for Hyderabad + remote is the agreed next step, owner's call.
 
 ### Still halted at the gate. Phase 3 not started.
+
+---
+
+## Phase 1b — Discovery broadening + Google Jobs link verification
+
+**Date:** 2026-06-14. Owner chose to broaden discovery (option A) after the gate,
+and flagged a real Google Jobs problem: its `apply_options` links often point to
+junk aggregators or dead pages, not a real JD/company page. "Authentication is a
+problem."
+
+### What I built
+- **Expanded ATS tenant list** (16 → ~41), round 2: added Hyderabad-present
+  (Notion) + remote-first companies (GitLab, Twilio, Grafana, Datadog, Vercel,
+  Supabase, OpenAI, PostHog, Airtable, Harvey, Cloudflare, MongoDB, Elastic,
+  Observe.AI, Sierra, Decagon, ElevenLabs, LangChain, Cockroach, Scale). All
+  slugs verified live. Effect: pool 2,456→6,110 raw; **314 Hyderabad-or-remote**
+  candidates (was ~the HighRadius cluster).
+- **Link resolver + verifier** (`jobfinder/discovery/link_resolver.py`) — the
+  "authentication" the owner asked for:
+  - Ranks apply links by source: employer (company domain / ATS) > LinkedIn /
+    Naukri > acceptable board > junk aggregator (talent.com, jooble, trabajo,
+    bebee, lensa, …).
+  - Verifies the best link over HTTP using **deterministic structural signals**:
+    `error=` redirect + job-id-token survival across redirects (catches ATS
+    soft-404s that return 200 but bounce to the board), 404/410 = dead, anti-bot
+    codes on a trusted host (LinkedIn 999 / Naukri 403) = real, junk host =
+    dropped. Prefers the employer's own page ("go deeper, find its website").
+  - First cut used page-text parked-detection → **flaky** (chunked body scan;
+    "404" in valid JS). Replaced with structural-only checks → **deterministic**
+    (real greenhouse job: ok ×5; soft-404: dead).
+- Wired into `google_jobs.py` (threaded verify; `verify_links`/`drop_unverified`
+  config) and marked ATS jobs `link_verified=True` by construction. Added
+  `link_verified` + `link_source` to `JobPosting`.
+- Tests: +3 deterministic resolver tests (tier classification, token, ranking).
+  Suite 10/10.
+
+### Validated (real HTTP, no key)
+- Tier classify: greenhouse→employer, careers.<co>→employer, linkedin/naukri→
+  platform, indeed→board, talent.com/jooble→junk. ✓
+- verify: real greenhouse job → ok (stable ×5); expired greenhouse (200→board
+  `?error=true`) → dead; junk → dropped. ✓
+- resolve_best prefers employer link, skips junk. ✓
+
+### Blocked on owner: Google Jobs live run (task 7)
+Needs `SERPAPI_KEY` in `~/Desktop/job-finder/.env` (the old project's .env is
+hook-protected; I did not read it). Once added, I run Google Jobs for Hyderabad +
+remote-India AI-delivery/PM queries, resolve+verify links, dedup with ATS, score,
+and present a verified shortlist with real company/JD links.

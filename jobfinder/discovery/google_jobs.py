@@ -10,25 +10,28 @@ personal data, no resume.
 
 from __future__ import annotations
 
+import concurrent.futures as cf
 import os
 
 import requests
 
 from ..schema import JobPosting
+from . import link_resolver
 from .base import Query
 
 ENDPOINT = "https://serpapi.com/search.json"
 TIMEOUT = 30
 
 
-def _pick_apply_url(job: dict) -> str:
-    for opt in job.get("apply_options", []) or []:
-        if opt.get("link"):
-            return opt["link"]
+def _apply_options(job: dict) -> list[dict]:
+    opts = list(job.get("apply_options", []) or [])
     rel = job.get("related_links") or []
-    if rel and rel[0].get("link"):
-        return rel[0]["link"]
-    return job.get("share_link", "") or ""
+    for r in rel:
+        if r.get("link"):
+            opts.append({"title": r.get("text", "related"), "link": r["link"]})
+    if job.get("share_link"):
+        opts.append({"title": "google", "link": job["share_link"]})
+    return opts
 
 
 def _extensions(job: dict) -> dict:
@@ -46,8 +49,13 @@ class GoogleJobsProvider:
         key = os.environ.get("SERPAPI_KEY")
         if not key:
             return []
+        sub = (cfg.get("discovery", {}) or {}).get("google_jobs", {}) or {}
+        verify = sub.get("verify_links", True)        # authenticate links (default on)
+        drop_unverified = sub.get("drop_unverified", False)
+
         titles = query.titles or ([query.raw_keywords] if query.raw_keywords else ["jobs"])
         out: list[JobPosting] = []
+        options: list[list[dict]] = []               # parallel apply_options per job
         seen_urls: set[str] = set()
         per_query = max(10, query.limit_per_channel // max(1, len(titles)))
 
@@ -55,12 +63,8 @@ class GoogleJobsProvider:
             collected = 0
             page_token = None
             while collected < per_query:
-                params = {
-                    "engine": "google_jobs",
-                    "q": f"{title} {query.location}".strip(),
-                    "hl": "en",
-                    "api_key": key,
-                }
+                params = {"engine": "google_jobs", "q": f"{title} {query.location}".strip(),
+                          "hl": "en", "api_key": key}
                 if query.location:
                     params["location"] = query.location
                 if page_token:
@@ -74,26 +78,46 @@ class GoogleJobsProvider:
                 if not results:
                     break
                 for job in results:
-                    url = _pick_apply_url(job)
-                    dedup_key = url or f"{job.get('company_name','')}::{job.get('title','')}"
+                    opts = _apply_options(job)
+                    dedup_key = (opts[0]["link"] if opts else "") or \
+                                f"{job.get('company_name','')}::{job.get('title','')}"
                     if dedup_key in seen_urls:
                         continue
                     seen_urls.add(dedup_key)
                     ext = _extensions(job)
-                    remote = "remote" if ext.get("work_from_home") else None
                     out.append(JobPosting(
                         title=job.get("title", "") or "",
                         company=job.get("company_name", "") or "",
                         source="google_jobs",
-                        url=url,
+                        url=opts[0]["link"] if opts else "",
                         location=job.get("location", "") or query.location,
                         description=job.get("description", "") or "",
                         employment_type=ext.get("schedule_type"),
-                        remote=remote,
+                        remote="remote" if ext.get("work_from_home") else None,
                         posted_at=ext.get("posted_at"),
                     ))
+                    options.append(opts)
                     collected += 1
                 page_token = (data.get("serpapi_pagination") or {}).get("next_page_token")
                 if not page_token:
                     break
+
+        if verify:
+            self._verify_all(out, options)
+            if drop_unverified:
+                out = [j for j in out if j.link_verified]
         return out
+
+    @staticmethod
+    def _verify_all(jobs: list[JobPosting], options: list[list[dict]]) -> None:
+        """Resolve + HTTP-verify each job's best apply link in parallel. Sets
+        url / link_verified / link_source on each job (the 'authentication')."""
+        def work(i):
+            res = link_resolver.resolve_best(options[i], jobs[i].company, jobs[i].title, verify=True)
+            return i, res
+        with cf.ThreadPoolExecutor(max_workers=10) as ex:
+            for i, res in ex.map(work, range(len(jobs))):
+                if res.url:
+                    jobs[i].url = res.url
+                jobs[i].link_verified = res.verified
+                jobs[i].link_source = res.source

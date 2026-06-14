@@ -49,6 +49,14 @@ class JobPosting:
     # ── Discovery metadata ──────────────────────────────────────────────────
     fetched_at: Optional[str] = None
 
+    # ── Link verification (Google Jobs "authentication") ────────────────────
+    # Whether `url` was confirmed to resolve to a real JD/company page, and what
+    # kind of source it points to (employer-ats | employer-site | linkedin |
+    # naukri | board | unverified). ATS-channel jobs are employer-native, so they
+    # are verified by construction.
+    link_verified: Optional[bool] = None
+    link_source: Optional[str] = None
+
     @property
     def id(self) -> str:
         """Stable id for dedup + 'never show twice'. URL is the strongest key;

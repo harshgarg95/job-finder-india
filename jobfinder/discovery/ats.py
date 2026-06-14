@@ -191,6 +191,9 @@ class AtsProvider:
         for t in self.tenants:
             try:
                 jobs = fetch_one(t["ats"], t["slug"], t.get("company", t["slug"]))
+                for j in jobs:  # ATS links are employer-native → verified by construction
+                    j.link_verified = True
+                    j.link_source = f"employer-ats:{t['ats']}"
                 results.extend(jobs)
             except Exception as e:  # one dead tenant must not break the scan
                 errors.append(f"{t.get('company', t['slug'])}({t['ats']}:{t['slug']}): {e}")
