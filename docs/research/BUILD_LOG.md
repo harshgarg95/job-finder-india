@@ -192,3 +192,58 @@ dashboard) NOT started, per the brief.
   story. Google-Jobs/Apify remain available for the owner to enable.
 - Created real user-layer `config/profile.yml` for the owner (gitignored) from
   the resume, so the live CLI test used authentic [GATE] fields.
+
+---
+
+## Gate review — feedback round 1 (owner, end-user QA)
+
+**Date:** 2026-06-14. The owner reviewed the top-10 at the gate. Two corrections,
+both fixed **generically** (rubric/code), with the owner's specifics staying in
+his user-layer `config/profile.yml` only.
+
+### Correction 1 — location (Hyderabad-only)
+Owner: Bengaluru/Bangalore/Delhi onsite = NOT applicable; only Hyderabad onsite
+or fully-remote. I'd wrongly assumed Bengaluru was acceptable.
+- Fix (user-layer): `profile.yml` `onsite_cities: ["Hyderabad"]` + hard
+  constraints updated. No code hardcoding — the location rule reads from profile.
+- Effect: #1/#4/#5/#8 (Stripe/Postman/Sarvam) drop to location-DON'T-APPLY; the
+  HighRadius Hyderabad cluster becomes the real top. Owner confirmed the 4
+  HighRadius JDs suit him.
+
+### Correction 2 — domain weighting (Stripe FinOps PM rated too high)
+Owner challenged the #1 (Stripe FinOps PM, AI Enablement, 4.3): it's a finance
+role and his resume isn't finance — should a strong function match rate it
+highest? **He was right — this was optimism creep.** Fixes to `prompts/_rubric.md`
+(all GENERIC, improve honesty for any resume/domain):
+1. **Domain weighted by role-dependency**: domain-as-context (delivery/PM role
+   where the employer's industry is just product context) = soft gap; vs
+   domain-as-substance (role's core is reasoning about the domain's processes) =
+   material gap. Employer industry alone is NOT a domain gap for a delivery role.
+2. **Seniority floor**: meeting the bottom of a stated range (8 of "8–12") is a
+   MATCH, not "under."
+3. **Anti-stacking**: soft gaps (missing cert, low-edge tenure, unworked-but-not-
+   required industry) must not compound into a false DON'T APPLY without a real
+   hard gate. (Mirror-image of optimism = equally dishonest.)
+4. **One adjacent project ≠ domain fluency** for a function-spanning role.
+5. **Enforced cap**: domain-as-substance + domain `adjacent` → cap 3.7 (STRETCH);
+   `wrong` → cap 3.0. A role in an unworked domain can't outrank a domain-fit role.
+- Also corrected profile `years_total` 7 → 8 (calendar-accurate: May 2018–present).
+
+### Live re-validation (gemini -p, real CLI)
+- First fix over-corrected: HighRadius APM briefly hit a false **1.5** (stacked
+  soft gaps + treated fintech industry as a domain gap on a delivery role).
+  Caught it, added anti-stacking + domain-as-context clarity.
+- After all fixes: **Stripe FinOps (location aside) 4.8 APPLY → 3.7 STRETCH**
+  (domain-substance cap); **HighRadius APM → 3.7** (recovered, genuine fit).
+- **Honest limitation recorded:** across tuning runs gemini scored HighRadius APM
+  1.5 → 4.4 → 4.1 → 3.7. Single-pass LLM scoring has real variance; the rubric
+  CAPS now bound it and the feedback loop is the corrector. Not hidden.
+
+### Corrected ranking (real profile, with location)
+2 APPLY · 2 STRETCH · 89 DON'T APPLY — only 4 clear the bar, all HighRadius
+Hyderabad (PM 3.9, APM 3.7, APM-II 3.3, Solution Design 3.1). Honest, and it
+exposes the next real gap: **discovery breadth** (16 mostly-Bengaluru ATS tenants;
+HighRadius is the only Hyderabad-HQ one; zero remote delivery roles). Broadening
+discovery for Hyderabad + remote is the agreed next step, owner's call.
+
+### Still halted at the gate. Phase 3 not started.

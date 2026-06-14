@@ -55,6 +55,18 @@ disqualifier caps.** Caps can only push the score **DOWN, never up.** A strength
 in one dimension does **not** offset a hard gap in another — that is exactly the
 optimistic-scorer mistake we are inverting.
 
+**But do not stack SOFT gaps into a false "no."** A hard *cap* fires only for a
+genuine hard gate: wrong function, clearly-under seniority, or an unmet hard
+requirement (work auth / required degree / mandatory named-tech years / location
+break). Soft gaps — a missing nice-to-have certification, sitting at the low edge
+of an experience band, an industry the candidate hasn't worked in but the role
+doesn't require — each lower the holistic score *modestly*; they must NOT compound
+into a DON'T APPLY unless at least one genuine hard gate is also present. A role
+where the candidate matches the core function and clears the seniority floor, with
+two or three soft gaps, is a **STRETCH (~3.x)**, not a 1.5 rejection. (Over-
+penalizing by stacking soft gaps is the mirror-image error of optimism — equally
+dishonest. The goal is calibration, not pessimism.)
+
 ### Dimension 1 — Seniority fit  `[GATE]`
 Compare the JD's required level / years to the candidate's **honest ceiling** for
 this kind of role (profile `seniority.honest_ceiling`, `years_in_function`).
@@ -66,6 +78,11 @@ this kind of role (profile `seniority.honest_ceiling`, `years_in_function`).
   manager / director+.
 - **Assessment:** `match` | `under` (JD wants more senior than candidate) |
   `over` (candidate clearly overqualified).
+- **Meeting the bottom of a stated range is a MATCH, not "under."** If the JD
+  says "8–12 years" and the candidate has ~8, that is a match (they clear the
+  floor). `under` means *clearly* below the floor (e.g. 4 years for a 10-year
+  role, or a level or more junior than required). Do not mark someone "under" for
+  being at the low edge of a band.
 - **CAP:** if `under` by a clear level or by a large years gap (≈3+ years beyond
   the candidate's function years) → **cap fit at 2.0**. Staff/Principal/Director
   when the honest ceiling is mid/manager → `under` → cap 2.0. Mild overqualified
@@ -98,11 +115,49 @@ the resume evidence that meets it, or mark it unmet.
 - If the JD does not state a requirement, write "not stated" — do **not** assume
   it is met, and do **not** invent it as unmet.
 
-### Dimension 4 — Domain fit
-Industry / domain alignment (profile `domains`). A strong domain match is a plus
-but does **not** rescue a wrong function or seniority. A hard domain requirement
-the candidate lacks (e.g. "must have 5y in clinical healthcare") behaves like a
-must-have (Dimension 3).
+### Dimension 4 — Domain fit (weight by how much the ROLE depends on domain fluency)
+Judge a domain gap by how much the role's **core work requires reasoning about
+the domain's own processes** — not merely whether the company is in that domain.
+Two postings in the same industry can deserve very different domain weights:
+
+- **Domain-as-context (gap is soft — don't over-penalize):** a delivery /
+  project / program-management role where the domain is just the *product being
+  delivered* and the JD's stated requirements are domain-agnostic (planning,
+  governance, stakeholder, scope/budget). A strong delivery candidate can
+  succeed without prior domain depth — the deep domain sits with specialists.
+  **The employer's INDUSTRY is not itself a domain gap.** A delivery/project
+  manager at a fintech (or healthtech, or legaltech) company is running delivery,
+  not doing finance — do NOT penalize them for the company's vertical unless the
+  JD actually requires that domain expertise to do the *delivery* work. (E.g. a
+  "Project Manager — manage client implementations on time/budget/quality" at a
+  finance-software firm is domain-as-context: score it on delivery fit.)
+- **Domain-as-substance (gap is material — usually caps the verdict at STRETCH):**
+  a role whose core job is to *reason about the domain's processes* — e.g.
+  "identify high-impact opportunities in [finance/healthcare/payments]
+  operations", design solutions specific to it, or partner credibly with that
+  domain's specialists. A candidate with no exposure to the domain is at a real
+  competitive disadvantage **even when function and seniority match well**. Lower
+  the score and lean STRETCH (not APPLY).
+  - **One adjacent project is a thread, not fluency.** If the candidate has a
+    single project that touches a corner of the domain (e.g. one
+    invoice-automation POC) but the role spans the *whole* function (AP **and**
+    AR **and** payroll **and** treasury **and** reconciliation), credit the
+    thread but mark domain **`adjacent`, not `match`**, and keep the verdict a
+    **STRETCH**. Do not let one relevant project be scored as full domain command
+    — that is optimism creep.
+  - **CAP (enforced, not advisory):** for a **domain-as-substance** role, if the
+    candidate's domain is `adjacent` → **cap fit at 3.7** (STRETCH); if `wrong`/
+    none → **cap fit at 3.0**. This guarantees a role in a domain the candidate
+    has not worked in cannot outrank a role that genuinely fits their domain,
+    however strong the function match looks. (Does NOT apply to domain-as-context
+    delivery/PM roles — those are scored on delivery fit.)
+- A hard, stated domain requirement the candidate lacks (e.g. "must have 5y in
+  clinical healthcare") behaves like a must-have (Dimension 3 → cap).
+
+**Caution (a common optimism error): do not let a striking function/skills match
+blind you to a domain-as-substance gap.** A perfect "what you do" match inside a
+domain the candidate has never worked in is a STRETCH, not a confident APPLY. A
+strong domain match is a plus but never rescues a wrong function or seniority.
 
 ### Dimension 5 — Comp & logistics (India)  `[GATE for hard breaks]`
 Use India-native terms: CTC/LPA, in-hand, notice period, on-site city. Check the
