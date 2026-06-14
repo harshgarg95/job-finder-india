@@ -21,7 +21,7 @@ text itself to a discovery channel **you** explicitly enabled.
 | `resume.txt` / `.md` / `.docx` / `.pdf` (any path you pass) | Your resume. Read-only to this app. Never edited, never uploaded to us. |
 | `config/profile.yml` | Your identity, target roles/archetypes, comp floor (CTC/LPA), location, notice period. |
 | `data/results/*` | Your scored job results and ranked top-N. |
-| `data/feedback.md` | Your scoring corrections ("wouldn't apply", "wrong level"). The memory the feedback loop learns from. |
+| `data/feedback.md` / `data/feedback.jsonl` | Your scoring corrections ("wouldn't apply", "wrong level/location/domain"). The memory the feedback loop learns from + replays into scoring. Written by the local dashboard or `jobfinder feedback`. |
 | `data/applications.md` | Your application tracker. |
 | `data/seen.jsonl` | Jobs already shown to you (so you are not shown the same job twice). |
 | `.env` | Your optional discovery keys (SerpAPI / Apify). Secrets. Gitignored. |

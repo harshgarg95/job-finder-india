@@ -10,3 +10,11 @@ PyYAML>=6.0           # profile.yml + ats_tenants.india.yml
 # Plain .txt / .md resumes need nothing extra.
 python-docx>=1.1      # .docx resumes
 pdfplumber>=0.11      # .pdf resumes
+
+# ── Optional: deep-fetch full JDs from JavaScript-rendered career pages ─────
+# Plain-HTML JDs work without this. Install only if you want the deep-fetch to
+# render SPA career pages (Workday-style):  pip install playwright && playwright install chromium
+# playwright>=1.40
+
+# The dashboard (python -m jobfinder dashboard) uses only the Python stdlib —
+# no extra dependency, binds to 127.0.0.1 (local only).

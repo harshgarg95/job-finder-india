@@ -93,6 +93,32 @@ You get a ranked top-N with, for each job: an honest 0–5 score, an
 apply/don't-apply call, and the resume-line ↔ JD-requirement citations behind
 it.
 
+## The feedback loop (the part that gets smarter)
+
+job-finder learns from your corrections — no statistical ML, just files. When you
+tell it a result was wrong, that correction **persists and retunes future
+scoring**: rejected jobs are suppressed, and your corrections replay into the
+scorer as binding lessons. (career-ops's own issue #35 notes nobody built this.)
+
+```bash
+python -m jobfinder dashboard      # local tracker UI at http://127.0.0.1:8755
+```
+
+The dashboard (Python stdlib, **local-only**) shows your scored shortlist with the
+verified JD link and one-click corrections — *Good match · Applied · Wouldn't
+apply · Wrong location / level / function / domain*. Each click is saved to
+`data/feedback.md` and applied on the next run. Prefer the terminal?
+`python -m jobfinder feedback --job <id> --action wrong_location --note "Bengaluru"`.
+
+Two scoring-robustness details worth knowing:
+- **Full-JD scoring.** A matching title isn't a matching candidate. job-finder
+  deep-fetches the *full* posting (with a headless-browser fallback for JavaScript
+  career pages) so it scores the real requirements — including the buried "needs
+  8 yrs X / a CS degree / hands-on Y" lines that get applicants auto-rejected.
+- **Conservative scoring.** Each job is scored several times and the *most
+  conservative* result is kept — an honest tool errs toward "skip" over wasting
+  your application on a false match.
+
 ## Privacy & ethics
 
 - **Local-first.** Everything runs on your machine. See [DATA_CONTRACT.md](DATA_CONTRACT.md).

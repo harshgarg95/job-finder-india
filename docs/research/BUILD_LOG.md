@@ -356,3 +356,56 @@ SWE". Fixes to `prompts/_rubric.md` Dimension 3 + `score-job.md` (generic):
 - Southwest: 4.4 APPLY → **1.5 DON'T APPLY** (CS degree + 3yrs AI/ML TPM unmet).
 - TriNet: 4.1 APPLY → **1.5 DON'T APPLY** (8yrs SWE/TPM + deep agile scrum unmet).
 All three now match the owner's expert read. Tests 10/10.
+
+---
+
+## Phase 3 — Feedback loop + dashboard (owner approved)
+
+**Date:** 2026-06-14.
+
+### What I built
+- **`jobfinder/feedback.py`** — the file-based feedback loop (the core
+  differentiator; career-ops issue #35 says nobody built it). Corrections persist
+  to `data/feedback.jsonl` + a human-readable `data/feedback.md` and **retune
+  future scoring** two ways: (a) rejected job_ids are suppressed from future
+  results; (b) `lessons_digest()` replays corrections into the scoring prompt as
+  binding lessons. Actions: good_match / applied / interested / not_interested /
+  wouldnt_apply / wrong_location / wrong_level / wrong_function / wrong_domain.
+- **Scorer integration** (`score.py`): loads feedback, suppresses rejected jobs,
+  injects the lessons digest into every prompt.
+- **`jobfinder/dashboard.py`** — a local tracker UI on `127.0.0.1:8755` (Python
+  stdlib http.server, **no new dependency, local-only**). Renders the scored
+  shortlist (score, verdict badge, verified link + source, cited reason) with
+  one-click corrections that POST to the feedback store. `python -m jobfinder
+  dashboard`. CLI alternative: `python -m jobfinder feedback --job … --action …`.
+- **Variance fix (important):** a dashboard pre-load run showed Southwest score
+  4.2 APPLY when round-2 had correctly given it 1.5 DON'T APPLY — single-pass LLM
+  scoring is non-deterministic (owner had also seen HighRadius swing 1.5↔4.4↔3.7).
+  Fixed in `score.py`: **score each job N=3× and keep the most conservative
+  (lowest) result** (honest scoring errs toward "skip", and records `score_range`
+  for transparency). Generic.
+- Tests +2 (feedback suppress/lessons/validation), 12/12. Docs updated
+  (README feedback-loop section, DATA_CONTRACT, requirements).
+
+### Result (3×-sampled re-score of 12 verified-Hyderabad roles)
+- **0 APPLY · 1 STRETCH · 11 DON'T APPLY** — honest for this batch (mostly
+  director/15–20yr roles or CS-degree/specific-skill-year gates). The variance fix
+  worked: Southwest now **1.5** (range 1.5–2.5 — it kept the low instead of the
+  spurious 4.2); Warner Bros/TriNet 1.5 (range 1.5–2.0); lone STRETCH is Google
+  TPM-Payments 3.0 (range 3.0–3.7, payments-domain caveat). `score_range` surfaces
+  the spread for transparency.
+- Dashboard verified end-to-end: GET / renders; GET /api/data returns 12 jobs +
+  stats; POST /api/feedback persisted a correction → `suppressed_ids` picked it up
+  + `lessons_digest` populated (the loop closes). Test correction then cleared so
+  the owner starts clean.
+
+### Note
+This batch was Hyderabad Google-Jobs roles; the owner's strongest fits remain the
+HighRadius delivery-PM roles (from the gate). The dashboard reads whatever the
+latest scoring run wrote; a full re-score across the combined verified pool is a
+cheap follow-up.
+
+### Phase 3 exit gate — MET (pending owner confirmation)
+A correction made in the dashboard persists to `data/feedback.*`, suppresses the
+job, and replays into the next scoring run — no user data leaves the machine.
+

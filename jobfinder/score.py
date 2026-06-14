@@ -30,12 +30,14 @@ def _read(path: str) -> str:
         return f.read()
 
 
-def build_prompt(resume_text: str, profile: dict, job: JobPosting) -> str:
-    """Assemble the full scoring prompt for one job."""
+def build_prompt(resume_text: str, profile: dict, job: JobPosting, lessons: str = "") -> str:
+    """Assemble the full scoring prompt for one job. `lessons` is the feedback
+    digest (prior user corrections) the scorer must honor — the retune loop."""
     rubric = _read(os.path.join(PROMPTS, "_rubric.md"))
     procedure = _read(os.path.join(PROMPTS, "score-job.md"))
     prof_yaml = yaml.safe_dump({k: v for k, v in profile.items() if not k.startswith("_")},
                                sort_keys=False, allow_unicode=True)
+    lessons_block = f"\n---\n{lessons}\n" if lessons else ""
     return f"""{rubric}
 
 ---
@@ -50,7 +52,7 @@ def build_prompt(resume_text: str, profile: dict, job: JobPosting) -> str:
 ```yaml
 {prof_yaml}
 ```
-
+{lessons_block}
 ---
 ## JOB TO SCORE
 {job.scoring_view()}
@@ -61,11 +63,30 @@ JSON object.
 """
 
 
+def _fit_of(v: dict) -> float:
+    try:
+        return float(v.get("fit_score", 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_dir: str,
-                   cli: str | None = None, top_n: int = 10) -> int:
+                   cli: str | None = None, top_n: int = 10, samples: int = 3) -> int:
+    from . import feedback
     resume_text = load_resume(resume_path)
     os.makedirs(out_dir, exist_ok=True)
     scored, failures = [], []
+
+    # Feedback loop: drop jobs the user already rejected, and replay corrections.
+    fb = feedback.load()
+    suppress = feedback.suppressed_ids(fb)
+    lessons = feedback.lessons_digest(fb)
+    if suppress:
+        before = len(jobs)
+        jobs = [j for j in jobs if j.id not in suppress]
+        print(f"  feedback: suppressed {before - len(jobs)} job(s) you previously rejected")
+    if lessons:
+        print(f"  feedback: replaying {len(fb)} prior correction(s) into scoring")
 
     print(f"\n── Scoring {len(jobs)} jobs via your AI CLI "
           f"({cli or os.environ.get('JOBFINDER_CLI') or 'auto-detect'}) ──")
@@ -75,15 +96,32 @@ def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_
         # sees buried gating requirements, not a summary).
         if job_fetcher.enrich(job):
             enriched += 1
-        prompt = build_prompt(resume_text, profile, job)
-        try:
-            verdict = cli_adapter.score(prompt, cli=cli)
+        prompt = build_prompt(resume_text, profile, job, lessons)
+        # Self-consistency: score N times, keep the MOST CONSERVATIVE (lowest)
+        # result. Single-pass LLM scores vary; honest scoring errs low (better to
+        # skip than to waste an application on a false APPLY).
+        outs, last_err = [], None
+        for _ in range(max(1, samples)):
+            try:
+                outs.append(cli_adapter.score(prompt, cli=cli))
+            except Exception as e:
+                last_err = e
+        if not outs:
+            failures.append({"title": job.title, "company": job.company, "error": str(last_err)})
+        else:
+            verdict = min(outs, key=_fit_of)            # conservative pick
+            fits = [_fit_of(v) for v in outs]
+            verdict["score_samples"] = len(outs)
+            verdict["score_range"] = [min(fits), max(fits)]
             verdict.setdefault("company", job.company)
             verdict.setdefault("title", job.title)
-            verdict.setdefault("url", job.url)
+            verdict["url"] = job.url
+            verdict["job_id"] = job.id
+            verdict["location"] = job.location
+            verdict["link_source"] = job.link_source
+            verdict["link_verified"] = job.link_verified
+            verdict["source"] = job.source
             scored.append(verdict)
-        except Exception as e:
-            failures.append({"title": job.title, "company": job.company, "error": str(e)})
         if i % 10 == 0:
             print(f"   scored {i}/{len(jobs)} (failures so far: {len(failures)})")
 

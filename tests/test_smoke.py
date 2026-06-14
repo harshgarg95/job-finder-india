@@ -16,6 +16,7 @@ from jobfinder.dedup import dedupe
 from jobfinder.filters import location_ok, keyword_prefilter
 from jobfinder.cli_adapter import _extract_json, detect_clis
 from jobfinder import score
+from jobfinder import feedback as FB
 from jobfinder.discovery import link_resolver as L
 
 
@@ -102,6 +103,30 @@ def test_resolve_best_prefers_employer_skips_junk_no_network():
     ]
     res = L.resolve_best(opts, "Acme", "PM", verify=False)  # ranking only, no HTTP
     assert "greenhouse.io" in res.url  # employer tier wins over linkedin/junk
+
+
+def test_feedback_suppress_and_lessons_no_io():
+    # pure functions on synthetic entries — no file writes
+    entries = [
+        {"job_id": "a1", "company": "Acme", "title": "PM", "action": "wouldnt_apply", "note": "too junior"},
+        {"job_id": "b2", "company": "Beta", "title": "TPM", "action": "wrong_location", "note": "Bengaluru"},
+        {"job_id": "c3", "company": "Gamma", "title": "Lead", "action": "good_match", "note": ""},
+    ]
+    sup = FB.suppressed_ids(entries)
+    assert "a1" in sup and "b2" in sup     # rejections suppress
+    assert "c3" not in sup                  # good_match does not suppress
+    digest = FB.lessons_digest(entries)
+    assert "PRIOR USER CORRECTIONS" in digest and "Bengaluru" in digest
+    assert FB.stats(entries)["wouldnt_apply"] == 1
+
+
+def test_feedback_rejects_unknown_action():
+    # validation happens before any file write, so this is safe + does no I/O
+    try:
+        FB.record("id", "Co", "Title", "url", "bogus_action")
+        assert False, "should have raised on unknown action"
+    except ValueError:
+        pass
 
 
 def test_build_prompt_contains_rubric_and_inputs():
