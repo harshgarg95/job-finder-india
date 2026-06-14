@@ -24,13 +24,12 @@ TIMEOUT = 30
 
 
 def _apply_options(job: dict) -> list[dict]:
+    # apply_options are the real per-source apply links. We deliberately ignore
+    # share_link (always a google.com/search page, never a real JD).
     opts = list(job.get("apply_options", []) or [])
-    rel = job.get("related_links") or []
-    for r in rel:
+    for r in job.get("related_links") or []:
         if r.get("link"):
             opts.append({"title": r.get("text", "related"), "link": r["link"]})
-    if job.get("share_link"):
-        opts.append({"title": "google", "link": job["share_link"]})
     return opts
 
 
@@ -73,7 +72,13 @@ class GoogleJobsProvider:
                 r.raise_for_status()
                 data = r.json()
                 if data.get("error"):
-                    raise RuntimeError(f"SerpAPI: {data['error']}")
+                    err = str(data["error"])
+                    # SerpAPI reports "no results" as an error — that's a normal
+                    # empty query, not a failure. Only real errors (bad key,
+                    # exhausted quota) should abort the run.
+                    if "hasn't returned any results" in err.lower() or "no results" in err.lower():
+                        break
+                    raise RuntimeError(f"SerpAPI: {err}")
                 results = data.get("jobs_results", []) or []
                 if not results:
                     break

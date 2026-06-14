@@ -42,12 +42,21 @@ EMPLOYER_HOSTS = (
 PLATFORM_HOSTS = ("linkedin.com", "naukri.com")
 BOARD_HOSTS = ("indeed.com", "wellfound.com", "angel.co", "instahyre.com", "hirist.com",
                "hirist.tech", "foundit.in", "builtin.com", "ycombinator.com", "glassdoor.")
-# Low-value aggregators that tend to re-post and not lead to a real JD/company page.
+# Low-value aggregators / re-posters / free-host spam that don't lead to a real
+# JD or company page (the user's exact complaint).
 JUNK_HOSTS = ("talent.com", "jooble.org", "trabajo.org", "jobrapido.com", "bebee.com",
               "lensa.com", "whatjobs.com", "careerjet.", "adzuna.", "neuvoo.", "jobcase.com",
               "simplyhired.", "shine.com", "timesjobs.com", "expertini.", "recruit.net",
               "jobsora.com", "smartjobsearcher.", "jobspresso.", "jobtome.", "jobleads.",
-              "clickjobs.io", "snagajob.", "kit.com", "mitula.", "trovit.")
+              "clickjobs.io", "snagajob.", "kit.com", "mitula.", "trovit.", "ai-search.io",
+              "grabjobs.", "jobgoround", "jobsxl", "joborondo",
+              # free-hosting providers spammers repost jobs on (checked before the
+              # employer-site name match, so a company name in a free-host
+              # subdomain can't masquerade as the real careers site)
+              "infinityfree.me", "000webhost", "byethost", "epizy.com", "rf.gd",
+              "rf.gd.", "free.nf", "kesug.com", "wuaze.com", "great-site.net",
+              "liveblog365.com", "rf.gd", "infy.uk", "42web.io", "rf.gd.",
+              "iitjobs.com", "jobted.", "joborondo")
 
 # Anti-bot / rate-limit codes that DON'T mean the posting is gone.
 _ANTIBOT = {401, 403, 429, 503, 999}
@@ -71,10 +80,16 @@ def _distinctive_token(url: str) -> str:
 
 
 def _tier(url: str, company: str) -> tuple[int, str]:
-    """Lower tier number = better source. Returns (tier, label)."""
+    """Lower tier = better source. Unknown sources are NOT trusted (tier 5):
+    only the employer's own page, a known ATS, LinkedIn/Naukri, or a real board
+    count as verifiable. Google-search/share links and free-host spam are junk."""
     h = host_of(url)
     if not h:
         return (9, "invalid")
+    low = url.lower()
+    # Google search / share links are not job pages — the #1 junk pattern.
+    if h in ("google.com", "www.google.com") or "google.com/search" in low or "/search?" in low:
+        return (4, "google-search")
     if any(h == j or h.endswith("." + j) or j in h for j in JUNK_HOSTS):
         return (4, "junk")
     if any(h == e or h.endswith("." + e) for e in EMPLOYER_HOSTS):
@@ -87,7 +102,7 @@ def _tier(url: str, company: str) -> tuple[int, str]:
         return (2, "linkedin" if "linkedin" in h else "naukri")
     if any(b in h for b in BOARD_HOSTS):
         return (3, "board")
-    return (3, "other")  # unknown but not known-junk → treat as acceptable board-ish
+    return (5, "unknown")  # unknown domain → unverified by default (don't trust)
 
 
 @dataclass
@@ -124,14 +139,16 @@ def verify_link(url: str, company: str = "", title: str = "") -> Resolved:
             return Resolved(url, "dead", False, "dead", final)  # redirected off the posting
         if code in _DEAD:
             return Resolved(url, "dead", False, "dead", final)
-        if final_label == "junk":
-            return Resolved(url, "junk", False, "junk", final)
+        if final_tier == 4:  # junk host or google-search/share link
+            return Resolved(url, final_label, False, "junk", final)
         if code in _ANTIBOT:
             # trusted platform/employer that blocks bots -> the posting is real
             if final_tier <= 3:
                 return Resolved(final, final_label, True, "trusted-blocked", final)
             return Resolved(url, final_label, False, "unreachable", final)
         if 200 <= code < 400:
+            if final_tier >= 5:  # unknown domain: reachable, but we can't trust it's a real JD
+                return Resolved(url, "unknown-source", False, "unverified", final)
             return Resolved(final, final_label, True, "ok", final)
         return Resolved(url, final_label, False, "unreachable", final)
     except requests.RequestException:
@@ -165,12 +182,15 @@ def resolve_best(apply_options: list[dict], company: str = "", title: str = "",
 
     first_seen = None
     for tier, url, label in cands:
-        if tier == 4:  # don't even surface junk unless nothing else exists
+        if tier >= 4:  # junk + unknown domains: never trusted, skip the verify pass
             continue
         res = verify_link(url, company, title)
         if first_seen is None:
             first_seen = res
         if res.verified:
             return res
-    # nothing verified — return the best candidate we saw, flagged unverified
-    return first_seen or Resolved(cands[0][1], cands[0][2], False, "unreachable")
+    # nothing trusted verified — flag unverified (caller drops it from the shortlist)
+    if first_seen:
+        return first_seen
+    best = cands[0]
+    return Resolved(best[1], best[2] if best[0] >= 4 else "unverified", False, "unverified")

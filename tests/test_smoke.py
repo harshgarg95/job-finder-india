@@ -82,6 +82,9 @@ def test_link_tier_classification():
     assert L._tier("https://in.indeed.com/viewjob?jk=1", "X")[0] == 3          # board
     assert L._tier("https://www.talent.com/view?id=1", "X")[0] == 4            # junk
     assert L._tier("https://jooble.org/jdp/1", "X")[0] == 4
+    assert L._tier("https://www.google.com/search?q=jobs", "X")[0] == 4        # google-search = junk
+    assert L._tier("https://hirevista.x.infinityfree.me/job/1", "X")[0] == 4   # free-host spam
+    assert L._tier("https://some-random-aggregator.xyz/job/1", "X")[0] == 5    # unknown = untrusted
 
 
 def test_distinctive_token_survival_logic():
