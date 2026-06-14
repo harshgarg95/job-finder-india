@@ -37,12 +37,15 @@ class CliAdapter:
     delivery: str = "stdin"
     # human note about cost/quality, surfaced in `detect`
     note: str = ""
+    # extra environment variables needed for a non-interactive run (k, v) pairs
+    env: tuple[tuple[str, str], ...] = ()
 
 
 # Headless invocations verified from each CLI's official docs (docs/research/03).
 ADAPTERS: dict[str, CliAdapter] = {
     "claude":   CliAdapter("claude",   "claude",   ("-p",),            "stdin", "Anthropic; top structured-output quality (paid)"),
-    "gemini":   CliAdapter("gemini",   "gemini",   ("-p",),            "arg",   "Google; free OAuth tier ended Jun-18-2026 for individuals"),
+    "gemini":   CliAdapter("gemini",   "gemini",   ("-p",),            "arg",   "Google; free OAuth tier ends Jun-18-2026 for individuals",
+                           env=(("GEMINI_CLI_TRUST_WORKSPACE", "true"),)),  # required for headless runs
     "codex":    CliAdapter("codex",    "codex",    ("exec",),          "arg",   "OpenAI; supports local Ollama via `--oss` (free/offline)"),
     "qwen":     CliAdapter("qwen",     "qwen",     ("-p",),            "arg",   "Alibaba; supports local Ollama/vLLM (free/offline)"),
     "opencode": CliAdapter("opencode", "opencode", ("run",),           "arg",   "SST; provider-agnostic incl. local (free/offline)"),
@@ -135,8 +138,10 @@ def score(
     if runner is not None:
         out = runner(argv, stdin_text)
     else:
+        run_env = {**os.environ, **dict(adapter.env)} if adapter.env else None
         proc = subprocess.run(
-            argv, input=stdin_text, capture_output=True, text=True, timeout=timeout
+            argv, input=stdin_text, capture_output=True, text=True,
+            timeout=timeout, env=run_env,
         )
         if proc.returncode != 0:
             raise RuntimeError(f"CLI '{cli}' exited {proc.returncode}: {proc.stderr[:500]}")

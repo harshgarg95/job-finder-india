@@ -1,0 +1,31 @@
+# India-relevant ATS tenants for the free zero-token scan (Channel A).
+#
+# Every slug here was VERIFIED LIVE (returns jobs from the public API) on
+# 2026-06-14 — not guessed. Many plausible slugs 404'd; only resolving ones are
+# kept. To add a company: find its Greenhouse/Lever/Ashby/Workable board slug,
+# confirm the public API returns jobs, then add a row. (System Layer — updatable.)
+#
+# `india_hq: true`  = India-headquartered (most listings are India roles).
+# Global companies are kept because they hire in India; the pipeline filters to
+# India locations + relevant titles downstream.
+
+tenants:
+  # ── India-HQ / India-heavy ────────────────────────────────────────────────
+  - { company: "PhonePe",     ats: greenhouse, slug: phonepe,    india_hq: true }
+  - { company: "Groww",       ats: greenhouse, slug: groww,      india_hq: true }
+  - { company: "Sarvam AI",   ats: ashby,      slug: sarvam,     india_hq: true }
+  - { company: "Postman",     ats: greenhouse, slug: postman,    india_hq: true }
+  - { company: "HighRadius",  ats: greenhouse, slug: highradius, india_hq: true }
+  - { company: "Druva",       ats: greenhouse, slug: druva,      india_hq: true }
+  - { company: "Atlan",       ats: ashby,      slug: atlan,      india_hq: true }
+
+  # ── Global companies with substantial India hiring ────────────────────────
+  - { company: "Databricks",  ats: greenhouse, slug: databricks }
+  - { company: "Stripe",      ats: greenhouse, slug: stripe }
+  - { company: "Coinbase",    ats: greenhouse, slug: coinbase }
+  - { company: "Airbnb",      ats: greenhouse, slug: airbnb }
+  - { company: "Rubrik",      ats: greenhouse, slug: rubrik }
+  - { company: "Vanta",       ats: ashby,      slug: vanta }
+  - { company: "Deepgram",    ats: ashby,      slug: deepgram }
+  - { company: "Replit",      ats: ashby,      slug: replit }
+  - { company: "Ramp",        ats: ashby,      slug: ramp }
