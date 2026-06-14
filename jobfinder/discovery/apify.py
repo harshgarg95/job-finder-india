@@ -46,6 +46,19 @@ def _epoch_iso(ms):
         return None
 
 
+def _strip_html(html: str) -> str:
+    if not html or "<" not in html:
+        return html or ""
+    try:
+        from bs4 import BeautifulSoup
+        import re as _re
+        t = BeautifulSoup(html, "html.parser").get_text("\n")
+        return _re.sub(r"\n{3,}", "\n\n", t).strip()
+    except Exception:
+        import re as _re
+        return _re.sub(r"<[^>]+>", " ", html).strip()
+
+
 # ── URL builders (per platform search URLs) ─────────────────────────────────
 def _naukri_url(title, loc):
     base = f"https://www.naukri.com/{_slug(title)}-jobs"
@@ -63,25 +76,39 @@ def _indeed_url(title, loc):
 
 # ── Output mappers (actor item -> JobPosting) ───────────────────────────────
 def _map_naukri(it):
+    """Robust across Naukri actors: memo23 (full HTML `description`, locations[],
+    companyDetail.name, staticUrl) and epicscrapers (snippet `jobDescription`,
+    placeholders[], companyName, jdURL)."""
+    # location
     loc = ""
-    for p in it.get("placeholders", []) or []:
-        if p.get("type") == "location":
-            loc = p.get("label", "")
+    if isinstance(it.get("locations"), list) and it["locations"]:
+        loc = ", ".join(x.get("label", "") for x in it["locations"] if x.get("label"))
+    if not loc:
+        for p in it.get("placeholders", []) or []:
+            if p.get("type") == "location":
+                loc = p.get("label", "")
+    # company
+    company = it.get("companyName") or (it.get("companyDetail") or {}).get("name") \
+        or it.get("staticCompanyName") or ""
+    # full description (memo23 `description` HTML) preferred over snippet
+    desc = _strip_html(it.get("description") or "") or (it.get("jobDescription") or "")
+    # url
+    jd = it.get("jdURL") or ""
+    url = it.get("staticUrl") or it.get("jobUrl") or \
+        (("https://www.naukri.com" + jd) if jd.startswith("/") else jd)
     sd = it.get("salaryDetail") or {}
     smin, smax = _f(sd.get("minimumSalary")), _f(sd.get("maximumSalary"))
     hidden = sd.get("hideSalary") or (smin in (0, None) and smax in (0, None))
-    jd = it.get("jdURL") or ""
-    url = it.get("jobUrl") or (("https://www.naukri.com" + jd) if jd.startswith("/") else jd)
-    skills = it.get("tagsAndSkills") or ""
+    skills = it.get("keySkills") or it.get("tagsAndSkills") or ""
+    skills = skills.split(",") if isinstance(skills, str) else (skills or [])
     return JobPosting(
-        title=it.get("title", "") or "", company=it.get("companyName", "") or "",
-        source="apify:naukri", url=url, location=loc,
-        description=it.get("jobDescription", "") or "",
+        title=it.get("title", "") or "", company=company,
+        source="apify:naukri", url=url, location=loc, description=desc,
         experience_min=_f(it.get("minimumExperience")), experience_max=_f(it.get("maximumExperience")),
         salary_min=None if hidden else smin, salary_max=None if hidden else smax,
         salary_currency=sd.get("currency"),
         salary_text="Not disclosed" if hidden else None,
-        skills=[s for s in skills.split(",") if s] if isinstance(skills, str) else [],
+        skills=[s for s in skills if s],
         posted_at=_epoch_iso(it.get("createdDate")),
         link_verified=True, link_source="apify:naukri")
 
@@ -115,9 +142,10 @@ def _map_indeed(it):
 
 PLATFORMS = {
     "naukri": {
-        "actor": "epicscrapers~naukri-scraper",
+        # memo23 returns the FULL JD (epicscrapers gave snippets); cheapest + most-used.
+        "actor": "memo23~naukri-scraper",
         "input": lambda titles, loc, lim: {"startUrls": [{"url": _naukri_url(t, loc)} for t in titles],
-                                            "maxJobs": lim},
+                                           "maximumJobs": lim},
         "map": _map_naukri,
     },
     "linkedin": {

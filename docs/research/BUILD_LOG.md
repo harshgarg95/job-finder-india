@@ -446,3 +446,23 @@ Each search now also triggers 3 Apify actor runs (billed to the owner's account;
 `discovery.apify.platforms` to control. Owner advised to rotate the token (shared
 in chat).
 
+---
+
+## Naukri full-JD fix (the validation-pass enabler)
+
+**Date:** 2026-06-15. The wider run surfaced the owner's real best-fit roles via
+Naukri, but they capped at "STRETCH — verify the JD yourself" because the
+`epicscrapers` actor returned only **snippets** (median ~366 chars; the top
+"BT Delivery Manager" was 392). Diagnosed it, then switched the Naukri actor to
+**`memo23/naukri-scraper`**, which returns the **full** HTML JD (4,153 chars for
+the same kind of role; provider median ~1,046, max 7,205) plus structured
+experience/salary/location and the absolute URL.
+
+- `discovery/apify.py`: Naukri actor → memo23; input via `startUrls` (multi-title,
+  one run) + `maximumJobs`; `_map_naukri` now robust across both actor shapes
+  (memo23 full `description` HTML stripped, `locations[]`, `companyDetail.name`,
+  `staticUrl`; epicscrapers fallback). cheapest actor ($0.60/1k), most-used.
+- Effect: the Naukri channel — the owner's most relevant source — now feeds the
+  scorer COMPLETE postings, so its best-fit roles get requirement-gated verdicts
+  instead of the incomplete-JD safety-net STRETCH.
+
