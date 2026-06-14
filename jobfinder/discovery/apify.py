@@ -61,8 +61,15 @@ def _strip_html(html: str) -> str:
 
 # ── URL builders (per platform search URLs) ─────────────────────────────────
 def _naukri_url(title, loc):
+    # Naukri keyword search needs ?k= (a bare SEO slug returns loosely-related
+    # jobs). Format mirrors the memo23 actor's own example input.
     base = f"https://www.naukri.com/{_slug(title)}-jobs"
-    return base + (f"-in-{_slug(loc)}" if loc and loc.lower() != "india" else "")
+    if loc and loc.lower() != "india":
+        base += f"-in-{_slug(loc)}"
+    url = f"{base}?k={quote(title)}"
+    if loc and loc.lower() != "india":
+        url += f"&l={quote(loc)}"
+    return url
 
 
 def _linkedin_url(title, loc):
