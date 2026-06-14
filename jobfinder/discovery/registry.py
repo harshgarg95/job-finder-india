@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from ..schema import JobPosting
 from .ats import AtsProvider
 from .google_jobs import GoogleJobsProvider
-from .apify_naukri import ApifyNaukriProvider
+from .apify import ApifyProvider
 from .base import Query
 
 
@@ -31,7 +31,7 @@ def build_providers(cfg: dict) -> list:
     return [
         AtsProvider(tenants),
         GoogleJobsProvider(),
-        ApifyNaukriProvider(),
+        ApifyProvider(),
     ]
 
 
@@ -49,7 +49,7 @@ def discover(query: Query, cfg: dict) -> tuple[list[JobPosting], list[ChannelRep
         if not on:
             reasons = {
                 "google_jobs": "set SERPAPI_KEY in .env to enable",
-                "apify_naukri": "set APIFY_TOKEN + discovery.apify_naukri.enabled:true to enable",
+                "apify": "set APIFY_TOKEN in .env to enable (Naukri + LinkedIn + Indeed)",
                 "ats": "no tenants configured",
             }
             reports.append(ChannelReport(p.id, False, skipped_reason=reasons.get(p.id, "disabled")))

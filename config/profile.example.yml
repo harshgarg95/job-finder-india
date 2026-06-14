@@ -92,3 +92,15 @@ hard_constraints:
   - "Must be India-based or fully remote (no relocation outside India)."
   - "No roles requiring work authorization the candidate does not hold."
   - "No pure research / PhD-required positions."
+
+# ── Discovery channels ──────────────────────────────────────────────────────
+# ATS scan (free) is always on. The two below are opt-in (need keys in .env).
+discovery:
+  # Google Jobs (Layer 2) runs automatically when SERPAPI_KEY is set.
+  # Apify (Layer 3) runs when APIFY_TOKEN is set. Each platform = 1 actor run
+  # per search, billed to YOUR Apify account. Trim this list to control cost.
+  apify:
+    platforms: ["naukri", "linkedin", "indeed"]   # remove any you don't want
+    limit: 40                                       # max results per platform per search
+    # actors:            # optional: swap an actor without code changes
+    #   naukri: "memo23/naukri-scraper"

@@ -409,3 +409,40 @@ cheap follow-up.
 A correction made in the dashboard persists to `data/feedback.*`, suppresses the
 job, and replays into the next scoring run — no user data leaves the machine.
 
+---
+
+## Discovery widening — Apify multi-platform (owner enabled)
+
+**Date:** 2026-06-14. Owner supplied an Apify token and asked to add LinkedIn /
+other platforms (not just Naukri). Confirmed: cookieless Apify actors are the
+legitimate way to reach LinkedIn/Indeed/Naukri (public guest API, no login, no
+account-ban; BYO-token bears the access).
+
+### What I built
+- **`discovery/apify.py`** — generalized multi-platform provider (replaces the
+  Naukri-only module). Platforms (actor handles + I/O field maps confirmed
+  against live runs): **Naukri** `epicscrapers/naukri-scraper` (startUrls +
+  structured experience/CTC), **LinkedIn** `curious_coder/linkedin-jobs-scraper`
+  (search URLs + count; no full-permission approval needed), **Indeed**
+  `misceres/indeed-scraper` (startUrls + country=IN). One actor run per platform
+  per search (multiple title-URLs in a single run → cost-efficient). All actors
+  configurable via `discovery.apify.platforms`/`actors`. Links from a platform's
+  own API → `link_verified=True`.
+- Registry uses it; off unless `APIFY_TOKEN` set. Docs + `.env.example` +
+  `profile.example.yml` updated. +1 test (URL builders + mappers). 13/13.
+- Note: `harvestapi/linkedin-job-search` (the structured-salary pick) needs a
+  one-time "full access" approval in the Apify console; used curious_coder
+  instead (works out of the box).
+
+### Live validation
+`ApifyProvider.fetch` (Hyderabad, 3 titles, 15/platform) → **45 jobs, 15 each,
+0 errors**, correct mapping (Naukri structured experience bands, real verified
+URLs across all three). These are India-native roles ATS + Google Jobs never
+surfaced.
+
+### Cost note
+Each search now also triggers 3 Apify actor runs (billed to the owner's account;
+~$0.10 for ~120 results; well within the $5/mo free credit). Trim
+`discovery.apify.platforms` to control. Owner advised to rotate the token (shared
+in chat).
+

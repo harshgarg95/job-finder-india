@@ -105,6 +105,24 @@ def test_resolve_best_prefers_employer_skips_junk_no_network():
     assert "greenhouse.io" in res.url  # employer tier wins over linkedin/junk
 
 
+def test_apify_url_builders_and_mappers_no_io():
+    from jobfinder.discovery import apify as AP
+    assert AP._naukri_url("AI Program Manager", "Hyderabad") == \
+        "https://www.naukri.com/ai-program-manager-jobs-in-hyderabad"
+    assert "keywords=AI%20Program%20Manager" in AP._linkedin_url("AI Program Manager", "Hyderabad")
+    assert "in.indeed.com/jobs" in AP._indeed_url("AI PM", "Hyderabad")
+    # naukri: relative jdURL -> absolute; hidden salary -> "Not disclosed"; exp parsed
+    n = AP._map_naukri({"title": "PM", "companyName": "Acme", "jdURL": "/job-listings-x-123",
+                        "minimumExperience": "5", "maximumExperience": "10",
+                        "salaryDetail": {"minimumSalary": 0, "maximumSalary": 0, "hideSalary": True},
+                        "placeholders": [{"type": "location", "label": "Hyderabad"}], "tagsAndSkills": "AI,PM"})
+    assert n.url == "https://www.naukri.com/job-listings-x-123" and n.experience_min == 5.0
+    assert n.location == "Hyderabad" and n.salary_text == "Not disclosed" and n.link_verified is True
+    # indeed: expired -> dropped
+    assert AP._map_indeed({"positionName": "X", "isExpired": True}) is None
+    assert AP._map_linkedin({"title": "TPM", "link": "https://in.linkedin.com/jobs/view/1"}).source == "apify:linkedin"
+
+
 def test_feedback_suppress_and_lessons_no_io():
     # pure functions on synthetic entries — no file writes
     entries = [
