@@ -290,8 +290,31 @@ problem."
   `?error=true`) → dead; junk → dropped. ✓
 - resolve_best prefers employer link, skips junk. ✓
 
-### Blocked on owner: Google Jobs live run (task 7)
-Needs `SERPAPI_KEY` in `~/Desktop/job-finder/.env` (the old project's .env is
-hook-protected; I did not read it). Once added, I run Google Jobs for Hyderabad +
-remote-India AI-delivery/PM queries, resolve+verify links, dedup with ATS, score,
-and present a verified shortlist with real company/JD links.
+### Google Jobs live run — DONE (owner authorized using the old project's key)
+Owner authorized copying the discovery key. Copied **only** SERPAPI_KEY +
+SERPER_API_KEY into the new `.env` (masked; Groq/Gemini scoring keys deliberately
+left out; old project untouched).
+
+**Live result (Hyderabad AI-PM/delivery queries):**
+- Google Jobs returned 52 listings → **24 verified, 28 junk dropped**. The
+  verifier killed exactly the junk the owner complained about: `google.com/search`
+  links, bebee, shine, jobrapido, jobleads, ai-search.io, infinityfree/liveblog365
+  free-host spam. Surfaced real employer/LinkedIn/board links.
+- Combined verified pool (Google Jobs + ATS, Hyderabad-or-remote): **70 Hyderabad
+  + 268 remote**, all link-verified.
+- Scored 16 verified-Hyderabad candidates through the real CLI (gemini). Honest,
+  well-calibrated output:
+  - **APPLY:** D.E. Shaw "Program Manager (GAI Tech)" 4.8 (verified
+    deshawindia.com); Southwest "Technology PM, Agentic AI" 4.4; TriNet "Sr TPM" 4.1.
+  - **STRETCH:** Google TPM-Payments 3.7 / PM-Voice-AI 3.7; Warner Bros Sr TPM 3.4
+    (3+yr eng gate); Eltropy PM-AI-Agents 3.0 (FinTech domain cap); ORBCOMM 3.0
+    (logistics domain cap) — the domain-substance cap working in the wild.
+  - **DON'T APPLY:** Medtronic Eng Director (20+ yrs), Michael Page Global Head
+    (15+ yrs + healthcare mandatory), Amazon Sr TPM (3+ yrs software-dev hard
+    gate), Eli Lilly PM (15+ yrs + CS degree) — wrong seniority / hard gates.
+- Robustness fixes from the run: SerpAPI "no results" handled as empty (was a
+  crash); unknown domains no longer auto-trusted.
+- Known item: 1/16 gemini calls errored (long prompt passed as a CLI arg) — single
+  transient; consider switching arg-delivery adapters to stdin/temp-file. Logged.
+
+Discovery is now genuinely useful for a Hyderabad seeker. Still pre-Phase-3.
