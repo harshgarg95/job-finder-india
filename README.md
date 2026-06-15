@@ -1,4 +1,4 @@
-# job-finder
+# Job Finder India
 
 **The job-search tool that tells you the truth about fit.**
 
@@ -6,7 +6,7 @@ Most "AI job match" tools are optimists. They are built to get you to apply —
 so a 70%-there role becomes a "4.7/5, great match, here's how to frame your
 gaps." That wastes your time and the recruiter's.
 
-job-finder is the opposite. It scores a job against your resume on a full
+Job Finder India is the opposite. It scores a job against your resume on a full
 **0–5** scale and **says "no" when it's a no.** A gap in years, function, or
 domain is a *disqualifier*, not "something to frame around." Every score cites
 the exact resume line and the exact job requirement behind it, so you can check
@@ -25,7 +25,7 @@ key** — scoring runs through whatever AI CLI you already use.
 
 ## How it's different
 
-| | Keyword scanners (Jobscan, Naukri Relevance) | Optimistic AI matchers | **job-finder** |
+| | Keyword scanners (Jobscan, Naukri Relevance) | Optimistic AI matchers | **Job Finder India** |
 |---|:--:|:--:|:--:|
 | Holistic LLM judgment (not keyword count) | ✗ | ✓ | ✓ |
 | **Says "don't apply" when it's a no** | n/a | ✗ (spins gaps) | ✓ |
@@ -78,7 +78,7 @@ result and never silently degrades.
 ## Quick start
 
 ```bash
-git clone https://github.com/harshgarg95/job-finder
+git clone https://github.com/harshgarg95/job-finder-india
 cd job-finder
 pip install -r requirements.txt          # discovery + resume-parsing deps only
 
@@ -130,7 +130,7 @@ Two scoring-robustness details worth knowing:
 
 ## Credits & prior art
 
-job-finder stands openly on good prior art and reimplements its patterns from
+Job Finder India stands openly on good prior art and reimplements its patterns from
 scratch (no copied files):
 
 - **[career-ops](https://github.com/santifer/career-ops)** (MIT) — the
@@ -142,7 +142,7 @@ scratch (no copied files):
   India boards. Credit to the actor authors we point users to (`epicscrapers`,
   `memo23`, `harvestapi`, `misceres`).
 
-These are independent projects; job-finder is not affiliated with or endorsed by
+These are independent projects; Job Finder India is not affiliated with or endorsed by
 them. Their names belong to them.
 
 ## License

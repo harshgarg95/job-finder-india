@@ -43,7 +43,7 @@ def _load_jobs() -> list[dict]:
 
 PAGE = """<!doctype html><html lang=en><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
-<title>job-finder — honest shortlist</title>
+<title>Job Finder India — honest shortlist</title>
 <style>
  :root{--bg:#0f1115;--card:#181b22;--mut:#8b93a7;--line:#262b36;--fg:#e7eaf0}
  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--fg);
@@ -69,7 +69,7 @@ PAGE = """<!doctype html><html lang=en><head><meta charset=utf-8>
  .done{opacity:.5} .tag{font-size:12px;color:#5fe39b;margin-left:8px}
  .empty{color:var(--mut);padding:40px;text-align:center}
 </style></head><body>
-<header><h1>job-finder — honest shortlist</h1>
+<header><h1>Job Finder India — honest shortlist</h1>
 <div class=sub id=sub>loading…</div></header>
 <div class=wrap id=list></div>
 <script>
