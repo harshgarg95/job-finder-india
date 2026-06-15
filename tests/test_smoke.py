@@ -105,6 +105,24 @@ def test_resolve_best_prefers_employer_skips_junk_no_network():
     assert "greenhouse.io" in res.url  # employer tier wins over linkedin/junk
 
 
+def test_skills_normalize_extract_match():
+    from jobfinder import skills as S
+    # normalize handles wording variants
+    assert S.normalize("Generative AI") == "genai"
+    assert S.normalize("retrieval augmented generation") == "rag"
+    assert S.normalize("LangGraph") == "langchain"          # alias -> canonical
+    assert S.normalize("underwater basket weaving") is None
+    # extract pulls canonical skills from resume-like text
+    got = S.extract("Built a RAG pipeline with LangChain; led program management and stakeholder management.")
+    assert "rag" in got and "langchain" in got and "program management" in got
+    # match: met / partial (sibling group) / missing / unknown
+    cand = ["langchain", "rag", "program management", "machine learning"]
+    assert S.match("LangChain", cand) == "met"
+    assert S.match("deep learning", cand) == "partial"       # sibling in ml-ds group
+    assert S.match("Java", cand) == "missing"
+    assert S.match("scuba diving", cand) == "unknown"
+
+
 def test_prescreen_tier0_gate_no_io():
     from jobfinder.prescreen import prescreen
     prof = {"seniority": {"years_total": 8}, "compensation": {"floor_ctc_lpa": 20}}

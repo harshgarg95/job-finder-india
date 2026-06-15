@@ -555,3 +555,38 @@ claude`: gemini hit quota on the larger prompt and **CLI failover automatically
 fell back to claude** — the resilience feature working unplanned in production
 (tiny Agent-SDK cost). 16/16 tests.
 
+---
+
+## LinkedIn matching — research + skills-normalization layer
+
+**Date:** 2026-06-15.
+
+### How LinkedIn matches (researched, sourced)
+Pipeline: (1) segment JD/resume into sections (weight the "qualifications"
+section), (2) extract skills via a trie over a **40k-skill taxonomy** + a
+two-tower mBERT semantic encoder, (3) **expand** via the Skills Graph (parent/
+child/sibling), (4) multitask transformer scoring with embeddings + Economic-Graph
++ hiring-outcome feedback. "How You Match" compares education/skills/years/title,
+criteria auto-pulled from the JD.
+
+### Verdict (corrected after owner pushback)
+The edge is mostly the **data moat** (normalized taxonomy/graph + behavioral/
+hiring-outcome signals at scale), not a secret method — the match *method*
+(extract → expand → compare → met/missing) an LLM already approximates for us.
+**Owner correctly challenged the "verified profile" claim:** LinkedIn's
+"verified" = opt-in Skill Assessments + endorsements; a user who only mirrors
+their resume has NONE of that → LinkedIn has *no more information* than the
+resume. The real, always-true edge is **structure + normalization** (resume →
+taxonomy-mapped skill tags), not extra/verified data. So for a resume-mirror
+user the entire gap is closeable — which motivated this build.
+
+### Built: `jobfinder/skills.py` (our lightweight Skills Graph)
+~30 canonical skills (AI delivery / PM / India) with aliases + adjacency groups.
+`normalize()` (wording → canonical, e.g. "Generative AI"→genai), `extract()`
+(resume → canonical skills = our 'structured profile'; pulled 19 sensible skills
+from the owner's real resume), `match()` (met / partial / missing, where a
+same-group sibling = partial — LinkedIn's skill-expansion idea). Wired into
+`score.py`: extract once, inject the normalized skill list into the scoring
+prompt so requirement-matching is consistent + cheaper. The LLM stays the judge;
+this feeds it a clean normalized view. +1 test; 17/17.
+

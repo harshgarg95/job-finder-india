@@ -31,14 +31,21 @@ def _read(path: str) -> str:
         return f.read()
 
 
-def build_prompt(resume_text: str, profile: dict, job: JobPosting, lessons: str = "") -> str:
+def build_prompt(resume_text: str, profile: dict, job: JobPosting, lessons: str = "",
+                 candidate_skills: list[str] | None = None) -> str:
     """Assemble the full scoring prompt for one job. `lessons` is the feedback
-    digest (prior user corrections) the scorer must honor — the retune loop."""
+    digest (prior user corrections); `candidate_skills` is the normalized skill
+    list extracted from the resume (our 'structured profile')."""
     rubric = _read(os.path.join(PROMPTS, "_rubric.md"))
     procedure = _read(os.path.join(PROMPTS, "score-job.md"))
     prof_yaml = yaml.safe_dump({k: v for k, v in profile.items() if not k.startswith("_")},
                                sort_keys=False, allow_unicode=True)
     lessons_block = f"\n---\n{lessons}\n" if lessons else ""
+    skills_block = ""
+    if candidate_skills:
+        skills_block = ("\n---\n## CANDIDATE SKILLS (normalized from the resume)\n"
+                        "Use this canonical list to match the JD's required skills consistently "
+                        "(a sibling skill = partial, not missing):\n" + ", ".join(candidate_skills) + "\n")
     return f"""{rubric}
 
 ---
@@ -53,7 +60,7 @@ def build_prompt(resume_text: str, profile: dict, job: JobPosting, lessons: str 
 ```yaml
 {prof_yaml}
 ```
-{lessons_block}
+{skills_block}{lessons_block}
 ---
 ## JOB TO SCORE
 {job.scoring_view()}
@@ -74,7 +81,12 @@ def _fit_of(v: dict) -> float:
 def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_dir: str,
                    cli: str | None = None, top_n: int = 10, samples: int = 3) -> int:
     from . import feedback
+    from . import skills as skills_mod
     resume_text = load_resume(resume_path)
+    candidate_skills = skills_mod.extract(resume_text)   # normalized once (structured profile)
+    if candidate_skills:
+        print(f"  normalized {len(candidate_skills)} resume skills: {', '.join(candidate_skills[:12])}"
+              + (" …" if len(candidate_skills) > 12 else ""))
     os.makedirs(out_dir, exist_ok=True)
     scored, failures = [], []
 
@@ -112,7 +124,7 @@ def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_
         # sees buried gating requirements, not a summary).
         if job_fetcher.enrich(job):
             enriched += 1
-        prompt = build_prompt(resume_text, profile, job, lessons)
+        prompt = build_prompt(resume_text, profile, job, lessons, candidate_skills)
         # Self-consistency: score N times, keep the MOST CONSERVATIVE (lowest)
         # result. Single-pass LLM scores vary; honest scoring errs low (better to
         # skip than to waste an application on a false APPLY).
