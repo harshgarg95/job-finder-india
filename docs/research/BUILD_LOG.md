@@ -494,3 +494,31 @@ argument, to avoid the OS arg-length limit. +2 tests (failover, stdin); 15/15.
 Note: failover may reach a paid CLI if that's what's installed — the switch is
 logged, and order is user-controllable via `$JOBFINDER_CLI` / `$JOBFINDER_CLI_FALLBACK`.
 
+---
+
+## Tiered scoring — Tier-0 deterministic pre-screen (owner idea, refined)
+
+**Date:** 2026-06-15. Owner proposed a cheap first-pass (skills/experience) before
+full-JD scoring. Refined to the safest, free version: a **deterministic Tier-0
+gate** (`prescreen.py`) using the structured fields we already have
+(experience bands + salary, strongest from Naukri) vs the profile `[GATE]` values
+— **no LLM call.** Rejects only *clear* misfits (experience_min ≥ years_total+3;
+disclosed comp below floor) with a cited reason; everything uncertain passes to
+full-JD scoring.
+
+Why not a skills-only LLM first-pass: the disqualifiers are often *buried* in the
+full JD (CS degree, "1 yr software dev", SAFe years) and wouldn't show in a skills
+summary — so a cheap pass must never *advance* a job on thin signal, only remove
+unambiguous no's. Wired into `score.py` before the deep-fetch + LLM loop (skips
+both). Demonstrated: on the wider pool it rejected the 12+/15+/VP roles and the
+below-floor comp roles (e.g. ti Steps 8 LPA < 20) for free, with citations.
++1 test; 16/16.
+
+### Other analysis levels considered (not built yet — for later)
+- Separate JD-requirement *extraction* (cache structured must-haves once) from the
+  resume *match* step → auditable + reusable across re-scores.
+- Confidence-gated full read: skip the expensive pass when Tier-0 is a clear
+  yes/no; spend it only on the uncertain middle.
+- Local-embedding pre-rank (resume↔JD similarity) for triage — needs an embedding
+  model; defer.
+

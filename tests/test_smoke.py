@@ -105,6 +105,22 @@ def test_resolve_best_prefers_employer_skips_junk_no_network():
     assert "greenhouse.io" in res.url  # employer tier wins over linkedin/junk
 
 
+def test_prescreen_tier0_gate_no_io():
+    from jobfinder.prescreen import prescreen
+    prof = {"seniority": {"years_total": 8}, "compensation": {"floor_ctc_lpa": 20}}
+    # over-senior requirement (15+ vs 8) -> reject
+    over = JobPosting(title="Director", company="C", source="apify:naukri", experience_min=15)
+    ok, why = prescreen(over, prof); assert not ok and "15" in why
+    # comp below floor (8 LPA < 20) -> reject
+    low = JobPosting(title="PM", company="C", source="apify:naukri", salary_max=800000, salary_currency="INR")
+    ok, why = prescreen(low, prof); assert not ok and "floor" in why.lower()
+    # borderline experience (9 vs 8, within +3 buffer) -> pass to LLM
+    bord = JobPosting(title="PM", company="C", source="apify:naukri", experience_min=9)
+    assert prescreen(bord, prof)[0] is True
+    # unknown fields -> pass (don't reject on missing data)
+    assert prescreen(JobPosting(title="PM", company="C", source="s"), prof)[0] is True
+
+
 def test_cli_failover_on_quota_error():
     # gemini "quota exhausted" -> fail over to next CLI, no network (runner injected)
     import os

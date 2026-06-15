@@ -18,6 +18,7 @@ import yaml
 
 from . import cli_adapter
 from .discovery import job_fetcher
+from .prescreen import prescreen
 from .resume import load_resume
 from .schema import JobPosting
 
@@ -91,7 +92,22 @@ def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_
     print(f"\n── Scoring {len(jobs)} jobs via your AI CLI "
           f"({cli or os.environ.get('JOBFINDER_CLI') or 'auto-detect'}) ──")
     enriched = 0
+    prescreened = 0
     for i, job in enumerate(jobs, 1):
+        # Tier-0: free deterministic gate — skip the LLM (and the deep-fetch) for
+        # clear structured misfits (over-senior requirement, comp below floor).
+        ok, why = prescreen(job, profile)
+        if not ok:
+            prescreened += 1
+            scored.append({
+                "company": job.company, "title": job.title, "url": job.url,
+                "job_id": job.id, "location": job.location, "source": job.source,
+                "link_source": job.link_source, "link_verified": job.link_verified,
+                "fit_score": 1.5, "verdict": "DON'T APPLY",
+                "headline": f"DON'T APPLY (pre-screen, no LLM) — {why}",
+                "prescreened": True, "score_range": [1.5, 1.5], "score_samples": 0,
+            })
+            continue
         # Deep-fetch the full JD if we only have a thin snippet (so the scorer
         # sees buried gating requirements, not a summary).
         if job_fetcher.enrich(job):
@@ -129,6 +145,8 @@ def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_
         if i % 10 == 0:
             print(f"   scored {i}/{len(jobs)} (failures so far: {len(failures)})")
 
+    if prescreened:
+        print(f"   (Tier-0 pre-screen rejected {prescreened} clear misfits — no LLM call spent)")
     if enriched:
         print(f"   (deep-fetched the full JD for {enriched} thin-snippet listings)")
     if not scored:
