@@ -105,10 +105,39 @@ def test_resolve_best_prefers_employer_skips_junk_no_network():
     assert "greenhouse.io" in res.url  # employer tier wins over linkedin/junk
 
 
+def test_cli_failover_on_quota_error():
+    # gemini "quota exhausted" -> fail over to next CLI, no network (runner injected)
+    import os
+    from jobfinder import cli_adapter as CA
+    os.environ["JOBFINDER_CLI_FALLBACK"] = "claude"
+    def runner(argv, stdin_text):
+        if argv[0] == "gemini":
+            raise RuntimeError("TerminalQuotaError: you have exhausted your capacity")
+        return '{"fit_score": 3.0, "verdict": "STRETCH"}'
+    switched = {}
+    out = CA.score("p", cli="gemini", runner=runner,
+                   on_failover=lambda f, t, w: switched.update({"f": f, "t": t}))
+    assert out["fit_score"] == 3.0 and out["_scored_by"] == "claude"
+    assert switched == {"f": "gemini", "t": "claude"}
+    os.environ.pop("JOBFINDER_CLI_FALLBACK", None)
+
+
+def test_cli_large_prompt_uses_stdin():
+    from jobfinder import cli_adapter as CA
+    seen = {}
+    def runner(argv, stdin_text):
+        seen["argv_len"] = len(argv); seen["stdin_len"] = len(stdin_text)
+        return '{"ok": 1}'
+    big = "x" * (CA.SAFE_ARG + 50)
+    CA.score(big, cli="gemini", runner=runner)  # gemini is arg-delivery
+    assert seen["stdin_len"] > CA.SAFE_ARG and seen["argv_len"] == 2  # prompt went to stdin, not argv
+
+
 def test_apify_url_builders_and_mappers_no_io():
     from jobfinder.discovery import apify as AP
-    assert AP._naukri_url("AI Program Manager", "Hyderabad") == \
-        "https://www.naukri.com/ai-program-manager-jobs-in-hyderabad"
+    nk = AP._naukri_url("AI Program Manager", "Hyderabad")
+    assert nk.startswith("https://www.naukri.com/ai-program-manager-jobs-in-hyderabad")
+    assert "k=AI%20Program%20Manager" in nk   # keyword search param (relevance fix)
     assert "keywords=AI%20Program%20Manager" in AP._linkedin_url("AI Program Manager", "Hyderabad")
     assert "in.indeed.com/jobs" in AP._indeed_url("AI PM", "Hyderabad")
     # naukri: relative jdURL -> absolute; hidden salary -> "Not disclosed"; exp parsed

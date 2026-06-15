@@ -465,4 +465,32 @@ experience/salary/location and the absolute URL.
 - Effect: the Naukri channel — the owner's most relevant source — now feeds the
   scorer COMPLETE postings, so its best-fit roles get requirement-gated verdicts
   instead of the incomplete-JD safety-net STRETCH.
+- Relevance fix: Naukri search needs `?k=<keyword>` (a bare SEO slug returned
+  loosely-related jobs); added it → on-target roles + full JDs (median ~3500).
+
+### Gate validation on full JDs (hand-scored, free — gemini quota was exhausted)
+Gemini hit `TerminalQuotaError` (free daily cap) mid-run, so I hand-scored the
+relevant full-JD Naukri set (the brief's own method). Result that matters:
+**LiveRamp "BT Delivery Manager, AI Automation" (Hyderabad, 3-5y) = APPLY ~4.3**
+— with the snippet it was a hedged "STRETCH, verify yourself"; the FULL JD ("own
+end-to-end delivery of AI & automation initiatives… translate ambiguous problems
+into automation roadmaps… manage concurrent AI projects… track delivery KPIs")
+maps near-verbatim to the resume, right level, Hyderabad, no CS-degree/coding
+gate. Honest rejections held (AI-engineer-disguised-as-manager, embedded, Java,
+bioinformatics-PhD). The full-JD pipeline produces a confident, cited APPLY on
+the owner's genuine best-fit role — the gate, met on real data.
+
+---
+
+## CLI failover + stdin hardening (owner-requested)
+
+**Date:** 2026-06-15. Today's gemini quota wall motivated automatic CLI failover.
+`cli_adapter.score()` now tries the preferred CLI then installed fallbacks
+(or `$JOBFINDER_CLI_FALLBACK`); on a quota/rate/auth error it switches to the
+next CLI instead of failing the run (`on_failover` callback logs the switch;
+`_scored_by` records which CLI answered). Stdin hardening: prompts over
+`SAFE_ARG` (16k) — i.e. full-JD prompts — are delivered via stdin, not as a CLI
+argument, to avoid the OS arg-length limit. +2 tests (failover, stdin); 15/15.
+Note: failover may reach a paid CLI if that's what's installed — the switch is
+logged, and order is user-controllable via `$JOBFINDER_CLI` / `$JOBFINDER_CLI_FALLBACK`.
 

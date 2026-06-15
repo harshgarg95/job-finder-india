@@ -101,9 +101,13 @@ def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_
         # result. Single-pass LLM scores vary; honest scoring errs low (better to
         # skip than to waste an application on a false APPLY).
         outs, last_err = [], None
+        def _note_failover(frm, to, why, _seen=set()):
+            if (frm, to) not in _seen:
+                _seen.add((frm, to))
+                print(f"   ⚠ CLI '{frm}' unavailable ({why[:60]}) → failing over to '{to}'")
         for _ in range(max(1, samples)):
             try:
-                outs.append(cli_adapter.score(prompt, cli=cli))
+                outs.append(cli_adapter.score(prompt, cli=cli, on_failover=_note_failover))
             except Exception as e:
                 last_err = e
         if not outs:

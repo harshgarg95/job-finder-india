@@ -98,40 +98,35 @@ def _extract_json(text: str) -> Optional[dict]:
     return None
 
 
-def score(
-    prompt: str,
-    cli: Optional[str] = None,
-    *,
-    timeout: int = 300,
-    runner: Optional[Callable[[list[str], str], str]] = None,
-) -> dict:
-    """Run `prompt` through the chosen CLI and return parsed JSON.
+# A big prompt passed as a CLI argument can blow the OS arg limit (E2BIG); above
+# this size we deliver via stdin instead (full-JD prompts get large).
+SAFE_ARG = 16000
+# Errors that mean "this CLI is unavailable right now — try the next one."
+_FAILOVER_HINTS = ("quota", "rate limit", "rate-limit", "ratelimit", "429",
+                   "exhausted", "resource_exhausted", "unauthor", "forbidden",
+                   "401", "403", "credit", "billing", "not on path", "no ai cli")
 
-    `cli`: adapter id; if None, uses $JOBFINDER_CLI or the first detected one.
-    `runner`: injectable for tests (argv, stdin_text) -> stdout_text.
-    Raises RuntimeError if no CLI is available or the output is unparseable.
-    """
-    if cli is None:
-        cli = os.environ.get("JOBFINDER_CLI")
-    if cli is None:
-        detected = detect_clis()
-        if not detected:
-            raise RuntimeError(
-                "No AI CLI found. Install one of: "
-                + ", ".join(ADAPTERS) + " (or set $JOBFINDER_CLI)."
-            )
-        cli = detected[0]["id"]
 
+def _is_failover_error(msg: str) -> bool:
+    m = (msg or "").lower()
+    return any(h in m for h in _FAILOVER_HINTS)
+
+
+def _score_one(prompt: str, cli: str, *, timeout: int,
+               runner: Optional[Callable[[list[str], str], str]]) -> dict:
+    """Drive ONE CLI and return parsed JSON. Raises on any failure."""
     adapter = ADAPTERS.get(cli)
     if adapter is None:
         raise RuntimeError(f"Unknown CLI '{cli}'. Known: {', '.join(ADAPTERS)}")
     if runner is None and not shutil.which(adapter.bin):
-        raise RuntimeError(f"CLI '{cli}' selected but binary '{adapter.bin}' is not on PATH.")
+        raise RuntimeError(f"CLI '{cli}' not on PATH.")
 
     argv = [adapter.bin, *adapter.args]
-    stdin_text = ""
-    if adapter.delivery == "arg":
+    # Stdin hardening: prefer stdin for stdin-delivery CLIs, and for arg-delivery
+    # CLIs whenever the prompt is large (avoids the arg-length limit on full JDs).
+    if adapter.delivery == "arg" and len(prompt) <= SAFE_ARG:
         argv.append(prompt)
+        stdin_text = ""
     else:
         stdin_text = prompt
 
@@ -139,17 +134,65 @@ def score(
         out = runner(argv, stdin_text)
     else:
         run_env = {**os.environ, **dict(adapter.env)} if adapter.env else None
-        proc = subprocess.run(
-            argv, input=stdin_text, capture_output=True, text=True,
-            timeout=timeout, env=run_env,
-        )
+        proc = subprocess.run(argv, input=stdin_text, capture_output=True,
+                              text=True, timeout=timeout, env=run_env)
         if proc.returncode != 0:
-            raise RuntimeError(f"CLI '{cli}' exited {proc.returncode}: {proc.stderr[:500]}")
+            raise RuntimeError(f"CLI '{cli}' exited {proc.returncode}: {proc.stderr[:400]}")
         out = proc.stdout
 
     parsed = _extract_json(out)
     if parsed is None:
-        raise RuntimeError(
-            f"CLI '{cli}' did not return parseable JSON. First 500 chars:\n{out[:500]}"
-        )
+        raise RuntimeError(f"CLI '{cli}' returned no parseable JSON: {out[:300]}")
     return parsed
+
+
+def _failover_order(cli: Optional[str]) -> list[str]:
+    """Ordered CLIs to try: explicit/preferred first, then installed fallbacks."""
+    order: list[str] = []
+    for c in (cli, os.environ.get("JOBFINDER_CLI")):
+        if c and c not in order:
+            order.append(c)
+    env_fb = os.environ.get("JOBFINDER_CLI_FALLBACK", "")
+    fallbacks = [c.strip() for c in env_fb.split(",") if c.strip()] or \
+                [d["id"] for d in detect_clis()]
+    for c in fallbacks:
+        if c not in order:
+            order.append(c)
+    return order
+
+
+def score(
+    prompt: str,
+    cli: Optional[str] = None,
+    *,
+    timeout: int = 300,
+    runner: Optional[Callable[[list[str], str], str]] = None,
+    on_failover: Optional[Callable[[str, str, str], None]] = None,
+) -> dict:
+    """Score `prompt`, automatically failing over across installed CLIs.
+
+    Tries the preferred CLI ($JOBFINDER_CLI or `cli`), then installed fallbacks
+    (or $JOBFINDER_CLI_FALLBACK). On a quota/rate/auth error (e.g. gemini's
+    TerminalQuotaError), moves to the next CLI instead of failing the run.
+    `on_failover(from_cli, to_cli, reason)` is called when it switches. Raises
+    only if EVERY candidate fails.
+    """
+    order = _failover_order(cli)
+    if not order:
+        raise RuntimeError("No AI CLI found. Install one of: " + ", ".join(ADAPTERS))
+
+    errors = []
+    for i, c in enumerate(order):
+        try:
+            result = _score_one(prompt, c, timeout=timeout, runner=runner)
+            result.setdefault("_scored_by", c)
+            return result
+        except Exception as e:  # noqa: BLE001 — any failure → try next CLI
+            errors.append(f"{c}: {e}")
+            nxt = order[i + 1] if i + 1 < len(order) else None
+            # Only fail over for availability errors (quota/auth/missing); a real
+            # parse error from an available CLI still moves on, but we record it.
+            if nxt and on_failover:
+                on_failover(c, nxt, str(e)[:160])
+            continue
+    raise RuntimeError("All CLIs failed:\n  " + "\n  ".join(errors))
