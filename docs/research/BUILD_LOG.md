@@ -522,3 +522,36 @@ below-floor comp roles (e.g. ti Steps 8 LPA < 20) for free, with citations.
 - Local-embedding pre-rank (resume↔JD similarity) for triage — needs an embedding
   model; defer.
 
+---
+
+## Rename + qualifications-match breakdown (LinkedIn-inspired)
+
+**Date:** 2026-06-15.
+
+### Rename → "Job Finder India"
+Owner wants the India-focused name for promotion (India scoring is the actual
+differentiator). Updated README/dashboard/package docstring; GitHub repo renamed
+`harshgarg95/job-finder` → `job-finder-india` (redirects preserved); local remote
+updated. CLI/package stay `jobfinder`.
+
+### Qualifications-match breakdown (owner's LinkedIn observation)
+Owner noticed LinkedIn's "required qualifications → match / some-match / missing"
+is accurate and agrees with our good results (external validation that our honest
+scoring is calibrated). Adopted the model: the rubric now emits a per-requirement
+**`qualifications` breakdown** — each requirement labelled **met / partial /
+missing** with evidence — plus a `qualifications_summary` (counts). Gating updated
+to the 3-state vocabulary: a **missing** hard requirement caps the score; a
+**partial** lowers it but doesn't hard-cap. The honest difference from LinkedIn:
+a *missing hard requirement still makes it DON'T APPLY* (LinkedIn would still show
+the job). Dashboard renders the breakdown (met=green / partial=amber / missing=red,
+collapsible).
+
+**Live demo (gemini quota back; failover fired):** LiveRamp "BT Delivery Manager,
+AI Automation" → **3.5 STRETCH, 7 met · 5 partial · 0 missing**. The breakdown
+surfaced a real nuance a quick read missed — "lead/coach a team" and "3 yrs
+automation" are *partial* (cross-functional coordination ≠ formal people-mgmt;
+~2.5 vs 3 yrs) — so a true STRETCH, not a clean APPLY. Notably `_scored_by:
+claude`: gemini hit quota on the larger prompt and **CLI failover automatically
+fell back to claude** — the resilience feature working unplanned in production
+(tiny Agent-SDK cost). 16/16 tests.
+

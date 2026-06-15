@@ -59,6 +59,9 @@ PAGE = """<!doctype html><html lang=en><head><meta charset=utf-8>
  .DONT{background:#3d1414;color:#ff9b9b}
  .title{font-weight:600} .meta{color:var(--mut);font-size:13px;margin-top:2px}
  .reason{font-size:13.5px;margin:10px 0;color:#c7cdda}
+ .quals{margin:8px 0;font-size:12.5px} .quals summary{cursor:pointer;color:#aab2c5}
+ .qrow{padding:2px 0 2px 14px;color:#c7cdda} .qev{color:#8b93a7}
+ .qmet{color:#5fe39b} .qpart{color:#e7c45f} .qmiss{color:#ff9b9b}
  a.link{color:#7aa2ff;text-decoration:none;font-size:13px} a.link:hover{text-decoration:underline}
  .vsrc{font-size:11px;color:var(--mut);border:1px solid var(--line);padding:1px 6px;border-radius:6px;margin-left:6px}
  .acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
@@ -79,6 +82,14 @@ const ACTIONS=[["good_match","Good match","good"],["applied","Applied","good"],
  ["wrong_domain","Wrong domain","bad"]];
 function badge(v){return v==="APPLY"?"APPLY":v==="STRETCH"?"STRETCH":"DONT"}
 function esc(s){return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+function qual(j){
+ if(!j.qualifications||!j.qualifications.length) return '';
+ const ic={met:'✓',partial:'~',missing:'✗'}, cl={met:'qmet',partial:'qpart',missing:'qmiss'};
+ const s=j.qualifications_summary||{};
+ const sum=`<b class=qmet>${s.met||0} met</b> · <b class=qpart>${s.partial||0} partial</b> · <b class=qmiss>${s.missing||0} missing</b>`;
+ const rows=j.qualifications.map(q=>`<div class="qrow ${cl[q.status]||''}">${ic[q.status]||'•'} ${esc(q.requirement)}${(q.evidence&&q.status!=='met')?` <span class=qev>— ${esc(q.evidence)}</span>`:''}</div>`).join('');
+ return `<details class=quals><summary>Qualifications match — ${sum}</summary>${rows}</details>`;
+}
 async function load(){
  const r=await fetch('/api/data'); const d=await r.json();
  const fb=d.stats||{}; const fbn=Object.values(fb).reduce((a,b)=>a+b,0);
@@ -99,6 +110,7 @@ async function load(){
        <span class=title> ${esc(j.title)}</span>
        <div class=meta>${esc(j.company)} · ${esc(j.location||'')} ${vlabel}</div>
        <div class=reason>${esc(j.headline||'')}</div>
+       ${qual(j)}
        ${j.url?`<a class=link href="${esc(j.url)}" target=_blank rel=noopener>open verified JD ↗</a>`:''}
        <div class=acts id="acts-${esc(j.job_id)}">
          <input class=note placeholder="why? (optional)" id="note-${esc(j.job_id)}">

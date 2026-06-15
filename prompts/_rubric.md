@@ -116,13 +116,25 @@ named** ones, which optimistic scorers skip right past:
     "1 year software development", "must be able to code"),
   - a specific **degree/field or certification** (CS/Engineering degree, PMP, …),
   - work authorization, on-site city, language.
-For each, cite the resume evidence that meets it, or mark it **unmet**.
 
-- **These quantified/named must-haves are HARD gates, not soft preferences:**
-  - one unmet hard must-have (a required N-years-in-named-skill/methodology, or a
+**Produce a qualifications-match breakdown** (the model LinkedIn's job-match
+uses, which candidates trust — but kept honest). For each required qualification,
+assign one of three states and cite the resume evidence:
+  - **`met`** — the resume clearly satisfies it (cite the exact line).
+  - **`partial`** — adjacent/related but short of what's asked (e.g. JD wants 3 yrs
+    of a tool, resume shows ~1; or a near-but-not-exact skill). Say what's short.
+  - **`missing`** — no evidence at all.
+Then give a one-line `qualifications_summary` (counts of met/partial/missing).
+This is the same met/some-match/missing view as LinkedIn — the difference is our
+*missing on a hard requirement still caps the score* (LinkedIn would still show
+the job; we say DON'T APPLY).
+
+- **A `missing` quantified/named must-have is a HARD gate, not a soft preference**
+  (a `partial` lowers the score but does not hard-cap):
+  - one **missing** hard must-have (a required N-years-in-named-skill/methodology, or a
     required hands-on capability the candidate doesn't have, e.g. software
     development for a non-developer) → **cap fit at 2.5** (STRETCH at most);
-  - the role's core is built on it, OR two-plus are unmet → **cap fit at 1.5**
+  - the role's core is built on it, OR two-plus are missing → **cap fit at 1.5**
     (DON'T APPLY).
   - a required CS/Engineering degree the candidate lacks, required work
     authorization, mandatory clearance, or "PhD required" → **cap at 1.5**.

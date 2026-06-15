@@ -39,9 +39,10 @@ and the exact output shape.
     "evidence": "exact resume line + exact JD line",
     "note": "string"
   },
-  "must_haves": [
-    {"requirement": "exact JD must-have", "evidence": "exact resume line or 'none'", "met": true}
+  "qualifications": [
+    {"requirement": "exact JD requirement", "status": "met | partial | missing", "evidence": "exact resume line (met), what falls short (partial), or 'none' (missing)"}
   ],
+  "qualifications_summary": {"met": 0, "partial": 0, "missing": 0},
   "domain": {"assessment": "match|adjacent|wrong|n/a", "note": "string"},
   "comp_logistics": {"assessment": "ok|concern|hard_break|not_stated", "note": "CTC/LPA, location, notice as relevant"},
   "legitimacy": {"tier": "high|medium|low", "signals": ["string"]},
@@ -55,12 +56,13 @@ and the exact output shape.
   strong the skills overlap looks.
 - If `seniority.assessment` is `under` by a clear level/years, `fit_score` MUST
   be ≤ 2.0.
-- An unmet **hard** must-have (work authorization, required degree, mandatory
+- A **missing** hard requirement (work authorization, required degree, mandatory
   named-tech years, on-site city the candidate won't move to) MUST cap at ≤ 1.5.
-- **Score the requirements, not the title.** Extract every quantified/named
-  must-have ("3 yrs SAFe", "8 yrs software engineering", "1 yr software
-  development", "CS degree") and gate on the unmet ones — a matching title is not
-  a matching candidate.
+- **Score the requirements, not the title.** Build the `qualifications` breakdown
+  (met / partial / missing + evidence) over every quantified/named requirement
+  ("3 yrs SAFe", "8 yrs software engineering", "1 yr software development", "CS
+  degree") and gate on the **missing** hard ones — a matching title is not a
+  matching candidate.
 - **Incomplete-JD safety net:** if the job text is short or clearly a truncated
   snippet (no requirements/qualifications section, well under a real posting), you
   CANNOT confirm the must-haves — do **NOT** output APPLY. Cap at **STRETCH** and
