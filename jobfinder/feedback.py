@@ -22,9 +22,13 @@ FB_JSONL = os.path.join(DATA, "feedback.jsonl")
 FB_MD = os.path.join(DATA, "feedback.md")
 
 # action key -> (human label, does it suppress the job from future results?)
+# Suppress = don't re-surface as a NEW recommendation. Rejections suppress
+# (you said no). "applied" also suppresses — you've ACTED on it, so it moves to
+# your tracked applications rather than being re-recommended. "good_match" does
+# NOT suppress — it's pure scoring feedback (you agree it fits) and stays visible.
 ACTIONS = {
-    "good_match":     ("Good match", False),
-    "applied":        ("Applied", False),
+    "good_match":     ("Good match", False),   # agree it fits → favor similar; keep showing
+    "applied":        ("Applied", True),        # you applied → track it, don't re-recommend
     "interested":     ("Interested", False),
     "not_interested": ("Not interested", True),
     "wouldnt_apply":  ("Wouldn't apply", True),
@@ -33,6 +37,8 @@ ACTIONS = {
     "wrong_function": ("Wrong function", True),
     "wrong_domain":   ("Wrong domain", True),
 }
+# actions that mean "I acted on / am tracking this application"
+TRACKED = {"applied"}
 
 
 def record(job_id: str, company: str, title: str, url: str, action: str,

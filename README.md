@@ -105,9 +105,13 @@ python -m jobfinder dashboard      # local tracker UI at http://127.0.0.1:8755
 ```
 
 The dashboard (Python stdlib, **local-only**) shows your scored shortlist with the
-verified JD link and one-click corrections — *Good match · Applied · Wouldn't
-apply · Wrong location / level / function / domain*. Each click is saved to
-`data/feedback.md` and applied on the next run. Prefer the terminal?
+verified JD link and one-click corrections, each saved to `data/feedback.md` and
+applied on the next run:
+- **Good match** — you agree it fits → scorer favors similar roles; the job stays
+  in your list.
+- **Applied** — you applied → tracked as an application, **not re-recommended**.
+- **Wouldn't apply / Wrong location / level / function / domain** — suppresses the
+  job and retunes scoring away from similar ones. Prefer the terminal?
 `python -m jobfinder feedback --job <id> --action wrong_location --note "Bengaluru"`.
 
 Two scoring-robustness details worth knowing:

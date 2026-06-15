@@ -134,7 +134,11 @@ async function rec(j,action,card){
  await fetch("/api/feedback",{method:"POST",headers:{"content-type":"application/json"},
    body:JSON.stringify({job_id:j.job_id,company:j.company,title:j.title,url:j.url,action,note})});
  card.classList.add("done");
- card.querySelector(".acts").innerHTML=`<span class=saved>✓ saved: ${action.replace(/_/g," ")} — will retune the next run</span>`;
+ const msg = action==="applied" ? "tracked as applied — won't be re-recommended"
+   : action==="good_match" ? "noted as a good match — will favor similar roles"
+   : action==="interested" ? "saved: interested"
+   : "won't be shown again ("+action.replace(/_/g," ")+") — will retune scoring";
+ card.querySelector(".acts").innerHTML=`<span class=saved>✓ ${msg}</span>`;
  const d=await (await fetch("/api/data")).json(); updateSub(d);
 }
 async function load(){
