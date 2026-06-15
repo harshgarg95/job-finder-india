@@ -104,14 +104,17 @@ scorer as binding lessons. (career-ops's own issue #35 notes nobody built this.)
 python -m jobfinder dashboard      # local tracker UI at http://127.0.0.1:8755
 ```
 
-The dashboard (Python stdlib, **local-only**) shows your scored shortlist with the
-verified JD link and one-click corrections, each saved to `data/feedback.md` and
+The dashboard (Python stdlib, **local-only**) shows your **APPLY / STRETCH**
+shortlist (DON'T-APPLY roles are hidden behind a "show filtered" toggle for
+auditing). Each role has two one-click calls, saved to `data/feedback.md` and
 applied on the next run:
-- **Good match** — you agree it fits → scorer favors similar roles; the job stays
-  in your list.
-- **Applied** — you applied → tracked as an application, **not re-recommended**.
-- **Wouldn't apply / Wrong location / level / function / domain** — suppresses the
-  job and retunes scoring away from similar ones. Prefer the terminal?
+- **✓ Applied** — you applied → tracked application, **not re-recommended**.
+- **✗ Wouldn't apply** — pick a reason (wrong location / level / function /
+  domain / comp too low, or "just passing") → suppresses it and retunes scoring.
+
+Changed your mind? Every call has a **change/undo** — the latest choice per job
+wins. Each scored role also shows a deterministic **auto-checked skills** line
+(from the local skills taxonomy) next to the LLM's qualifications breakdown. Prefer the terminal?
 `python -m jobfinder feedback --job <id> --action wrong_location --note "Bengaluru"`.
 
 Two scoring-robustness details worth knowing:

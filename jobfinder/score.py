@@ -153,6 +153,14 @@ def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_
             verdict["link_source"] = job.link_source
             verdict["link_verified"] = job.link_verified
             verdict["source"] = job.source
+            # Deterministic skills cross-check (our taxonomy, no LLM): a second,
+            # consistent opinion on which JD skills the resume met/partial/missing.
+            chk = {"met": [], "partial": [], "missing": []}
+            for s in skills_mod.extract(job.description):
+                st = skills_mod.match(s, candidate_skills)
+                if st in chk:
+                    chk[st].append(s)
+            verdict["skills_check"] = chk
             scored.append(verdict)
         if i % 10 == 0:
             print(f"   scored {i}/{len(jobs)} (failures so far: {len(failures)})")

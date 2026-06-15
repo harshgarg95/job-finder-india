@@ -201,6 +201,16 @@ def test_feedback_suppress_and_lessons_no_io():
     assert FB.stats(entries)["wouldnt_apply"] == 1
 
 
+def test_feedback_latest_choice_wins():
+    # changing your mind: the most recent call per job overrides the earlier one
+    e = [{"job_id": "j1", "company": "C", "title": "T", "action": "wouldnt_apply"},
+         {"job_id": "j1", "company": "C", "title": "T", "action": "applied"}]
+    latest = FB._latest(e)
+    assert len(latest) == 1 and latest[0]["action"] == "applied"
+    assert FB.suppressed_ids(e) == {"j1"}            # applied suppresses (tracked)
+    assert FB.stats(e) == {"applied": 1}             # counts latest only, not both
+
+
 def test_feedback_rejects_unknown_action():
     # validation happens before any file write, so this is safe + does no I/O
     try:

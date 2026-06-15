@@ -1,9 +1,10 @@
 """Local dashboard/tracker — review the honest shortlist and capture corrections.
 
 Runs a tiny localhost HTTP server (Python stdlib, no extra dependency, bound to
-127.0.0.1 — data never leaves your machine). It renders the scored results and
-turns one-click corrections into persistent feedback (data/feedback.*), which the
-scorer replays on the next run. This is where the feedback loop lives.
+127.0.0.1 — data never leaves your machine). It shows the APPLY/STRETCH shortlist
+(DON'T-APPLY hidden behind a toggle), and turns one-click calls — Applied, or
+Wouldn't apply (+reason) — into persistent feedback (data/feedback.*) that the
+scorer replays next run. Latest choice per job wins; every call is undoable.
 
     python -m jobfinder dashboard           # opens http://127.0.0.1:8755
 """
@@ -52,21 +53,19 @@ PAGE = """<!doctype html><html lang=en><head><meta charset=utf-8>
  body{margin:0;background:var(--bg);color:var(--fg);
    font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
  header{padding:22px 28px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;
-   background:rgba(14,16,20,.92);backdrop-filter:blur(6px)}
+   background:rgba(14,16,20,.92);backdrop-filter:blur(6px);z-index:5}
  h1{margin:0;font-size:18px;font-weight:600;letter-spacing:.2px}
- .sub{color:var(--mut);font-size:12.5px;margin-top:5px;display:flex;gap:14px;flex-wrap:wrap}
+ .sub{color:var(--mut);font-size:12.5px;margin-top:5px;display:flex;gap:14px;flex-wrap:wrap;align-items:center}
  .pill{padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:600}
  .p-apply{background:#11331f;color:var(--met)} .p-stretch{background:#33290d;color:var(--part)}
  .p-dont{background:#331515;color:var(--miss)}
- .wrap{max-width:860px;margin:0 auto;padding:20px 24px 60px}
- .job{background:var(--card);border:1px solid var(--line);border-radius:14px;
-   padding:16px 18px;margin:14px 0;transition:opacity .2s}
+ .wrap{max-width:860px;margin:0 auto;padding:20px 24px 70px}
+ .job{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin:14px 0}
  .row1{display:flex;gap:14px;align-items:center}
  .score{font-size:26px;font-weight:700;min-width:50px;text-align:center;line-height:1}
  .score small{display:block;font-size:10px;color:var(--mut);font-weight:500;margin-top:3px}
  .s-apply{color:var(--met)} .s-stretch{color:var(--part)} .s-dont{color:var(--miss)}
- .ttl{font-size:15px;font-weight:600}
- .meta{color:var(--mut);font-size:12.5px;margin-top:3px}
+ .ttl{font-size:15px;font-weight:600} .meta{color:var(--mut);font-size:12.5px;margin-top:3px}
  .vsrc{border:1px solid var(--line);border-radius:6px;padding:0 6px;margin-left:4px;font-size:11px;color:var(--mut)}
  ul.why{margin:12px 0 4px;padding-left:18px} ul.why li{margin:3px 0;color:#cfd5e0}
  .quals{margin:12px 0 4px;background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
@@ -75,29 +74,35 @@ PAGE = """<!doctype html><html lang=en><head><meta charset=utf-8>
  .qgrp{margin:6px 0} .qh{font-size:12px;font-weight:600;margin-bottom:2px}
  .qgrp ul{margin:0 0 4px;padding-left:20px} .qgrp li{margin:2px 0;font-size:12.5px;color:#cfd5e0}
  .qgrp .ev{color:var(--mut)}
+ .skills{font-size:12px;color:var(--mut);margin:8px 0 2px}
  a.link{color:var(--blue);text-decoration:none;font-size:12.5px;display:inline-block;margin:6px 0 2px}
  a.link:hover{text-decoration:underline}
- .acts{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:13px;
-   border-top:1px solid var(--line);padding-top:12px}
- .acts .lbl{font-size:11.5px;color:var(--mut);margin-right:2px}
+ .acts,.reasons{display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin-top:12px}
+ .acts{border-top:1px solid var(--line);padding-top:12px}
+ .reasons{margin-top:8px}
+ .lbl{font-size:11.5px;color:var(--mut);margin-right:2px}
  button.act{background:var(--card2);color:var(--fg);border:1px solid var(--line);
-   border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer;transition:all .12s}
- button.act:hover{border-color:#3a4458}
- button.act.good:hover{border-color:var(--met);color:var(--met)}
- button.act.bad:hover{border-color:var(--miss);color:var(--miss)}
- .note{background:var(--bg);border:1px solid var(--line);color:var(--fg);border-radius:8px;
-   padding:5px 9px;font-size:12px;flex:1;min-width:150px}
- .done{opacity:.45} .saved{font-size:12px;color:var(--met)}
+   border-radius:8px;padding:6px 12px;font-size:12.5px;cursor:pointer;transition:all .12s}
+ button.act.good:hover,button.act.good.on{border-color:var(--met);color:var(--met)}
+ button.act.bad:hover,button.act.bad.on{border-color:var(--miss);color:var(--miss)}
+ button.chip{background:var(--bg);color:var(--mut);border:1px solid var(--line);
+   border-radius:999px;padding:4px 11px;font-size:12px;cursor:pointer}
+ button.chip:hover{border-color:var(--miss);color:var(--miss)}
+ .saved{font-size:12.5px;color:var(--met);margin-top:12px;border-top:1px solid var(--line);padding-top:12px}
+ .saved.neg{color:var(--miss)} .change{color:var(--blue);cursor:pointer;margin-left:10px;font-size:12px}
+ .change:hover{text-decoration:underline}
+ .toggle{background:none;border:1px dashed var(--line);color:var(--mut);border-radius:8px;
+   padding:8px 14px;font-size:12.5px;cursor:pointer;margin:18px 0 4px;width:100%}
+ .toggle:hover{border-color:var(--mut);color:var(--fg)}
  .empty{color:var(--mut);padding:50px;text-align:center}
 </style></head><body>
 <header><h1>Job Finder India <span style="color:var(--mut);font-weight:400">— honest shortlist</span></h1>
 <div class=sub id=sub>loading…</div></header>
-<div class=wrap id=list></div>
+<div class=wrap><div id=list></div><div id=hidden></div></div>
 <script>
-const ACTIONS=[["good_match","Good match","good"],["applied","Applied","good"],
- ["wouldnt_apply","Wouldn't apply","bad"],["wrong_location","Wrong location","bad"],
- ["wrong_level","Wrong level","bad"],["wrong_function","Wrong function","bad"],
- ["wrong_domain","Wrong domain","bad"]];
+const REASONS=[["wrong_location","Wrong location"],["wrong_level","Wrong level"],
+ ["wrong_function","Wrong function"],["wrong_domain","Wrong domain"],
+ ["wrong_comp","Comp too low"],["wouldnt_apply","Just passing"]];
 const esc=s=>(s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const vkey=v=>(v||"").startsWith("DON")?"dont":v==="APPLY"?"apply":"stretch";
 const vlabel=v=>(v||"").startsWith("DON")?"DON'T APPLY":v;
@@ -119,57 +124,88 @@ function qualsBlock(j){
    `<b class=cmet>${s.met} met</b> · <b class=cpart>${s.partial} partial</b> · <b class=cmiss>${s.missing} missing</b></div>`+
    sec("met","✓ Met","cmet")+sec("partial","~ Partial","cpart")+sec("missing","✗ Missing","cmiss")+`</div>`;
 }
+function skillsLine(j){
+ const s=j.skills_check; if(!s) return "";
+ const seg=(arr,cls,ic)=>(arr&&arr.length)?`<span class=${cls}>${ic} ${esc(arr.join(", "))}</span>`:"";
+ const segs=[seg(s.met,"cmet","✓"),seg(s.partial,"cpart","~"),seg(s.missing,"cmiss","✗")].filter(Boolean);
+ return segs.length?`<div class=skills><span class=lbl>Skills (auto-checked):</span> ${segs.join(" &nbsp; ")}</div>`:"";
+}
 function updateSub(d){
  const fbn=Object.values(d.stats||{}).reduce((a,b)=>a+b,0);
  const n=v=>d.jobs.filter(j=>vkey(j.verdict)===v).length;
  document.getElementById("sub").innerHTML=
-   `<span>${d.jobs.length} scored</span>`+
    `<span class="pill p-apply">${n("apply")} APPLY</span>`+
    `<span class="pill p-stretch">${n("stretch")} STRETCH</span>`+
-   `<span class="pill p-dont">${n("dont")} DON'T</span>`+
-   `<span>${fbn} corrections saved</span>`;
+   `<span class="pill p-dont">${n("dont")} filtered out</span>`+
+   `<span>${fbn} call${fbn==1?"":"s"} saved</span>`;
 }
-async function rec(j,action,card){
- const note=card.querySelector(".note").value||"";
- await fetch("/api/feedback",{method:"POST",headers:{"content-type":"application/json"},
-   body:JSON.stringify({job_id:j.job_id,company:j.company,title:j.title,url:j.url,action,note})});
- card.classList.add("done");
- const msg = action==="applied" ? "tracked as applied — won't be re-recommended"
-   : action==="good_match" ? "noted as a good match — will favor similar roles"
-   : action==="interested" ? "saved: interested"
-   : "won't be shown again ("+action.replace(/_/g," ")+") — will retune scoring";
- card.querySelector(".acts").innerHTML=`<span class=saved>✓ ${msg}</span>`;
- const d=await (await fetch("/api/data")).json(); updateSub(d);
+async function post(url,j){return (await fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(j)})).json();}
+
+function mountActions(card,j){
+ const host=card.querySelector(".actionhost"); host.innerHTML="";
+ const acts=document.createElement("div"); acts.className="acts";
+ acts.innerHTML=`<span class=lbl>Your call:</span>`;
+ const applied=document.createElement("button"); applied.className="act good"; applied.textContent="✓ Applied";
+ const wont=document.createElement("button"); wont.className="act bad"; wont.textContent="✗ Wouldn't apply";
+ acts.append(applied,wont); host.append(acts);
+ applied.addEventListener("click",()=>save(card,j,"applied"));
+ wont.addEventListener("click",()=>{
+   if(host.querySelector(".reasons")) return;
+   const r=document.createElement("div"); r.className="reasons"; r.innerHTML=`<span class=lbl>Reason:</span>`;
+   REASONS.forEach(([a,label])=>{const c=document.createElement("button");c.className="chip";c.textContent=label;
+     c.addEventListener("click",()=>save(card,j,a)); r.append(c);});
+   host.append(r);
+ });
+}
+async function save(card,j,action){
+ await post("/api/feedback",{job_id:j.job_id,company:j.company,title:j.title,url:j.url,action});
+ const host=card.querySelector(".actionhost");
+ const positive=action==="applied";
+ const txt=action==="applied"?"tracked as applied — won't be re-recommended"
+   :action==="wouldnt_apply"?"passed — won't be re-recommended"
+   :`won't apply (${action.replace("wrong_","wrong ")}) — will retune scoring`;
+ host.innerHTML=`<div class="saved ${positive?'':'neg'}">✓ ${txt}<span class=change>change</span></div>`;
+ host.querySelector(".change").addEventListener("click",async()=>{await post("/api/undo",{job_id:j.job_id});mountActions(card,j);refreshSub();});
+ refreshSub();
+}
+async function refreshSub(){updateSub(await (await fetch("/api/data")).json());}
+
+function makeCard(j){
+ const vk=vkey(j.verdict);
+ const el=document.createElement("div"); el.className="job";
+ const vsrc=j.link_verified?`<span class=vsrc>✓ ${esc(j.link_source||"verified")}</span>`:"";
+ el.innerHTML=
+   `<div class=row1>
+      <div class="score s-${vk}">${(+j.fit_score).toFixed(1)}<small>${esc((j.score_range&&j.score_range[0]!=j.score_range[1])?j.score_range.join("–"):"")}</small></div>
+      <div style="flex:1">
+        <span class="pill p-${vk}">${vlabel(j.verdict)}</span>
+        <span class=ttl> ${esc(j.title)}</span>
+        <div class=meta>${esc(j.company)} · ${esc(j.location||"")} ${vsrc}</div>
+      </div>
+    </div>
+    ${whyBullets(j.headline)}${qualsBlock(j)}${skillsLine(j)}
+    ${j.url?`<a class=link href="${esc(j.url)}" target=_blank rel=noopener>open verified JD ↗</a>`:""}
+    <div class=actionhost></div>`;
+ mountActions(el,j);
+ return el;
 }
 async function load(){
- const d=await (await fetch("/api/data")).json();
- updateSub(d);
- const L=document.getElementById("list"); L.innerHTML="";
+ const d=await (await fetch("/api/data")).json(); updateSub(d);
+ const L=document.getElementById("list"), H=document.getElementById("hidden");
+ L.innerHTML=""; H.innerHTML="";
  if(!d.jobs.length){L.innerHTML="<div class=empty>No scored results yet. Run a search + scoring first.</div>";return;}
- for(const j of d.jobs){
-   const vk=vkey(j.verdict);
-   const el=document.createElement("div"); el.className="job";
-   const vsrc=j.link_verified?`<span class=vsrc>✓ ${esc(j.link_source||"verified")}</span>`:"";
-   el.innerHTML=
-     `<div class=row1>
-        <div class="score s-${vk}">${(+j.fit_score).toFixed(1)}<small>${esc((j.score_range&&j.score_range[0]!=j.score_range[1])?j.score_range.join("–"):"")}</small></div>
-        <div style="flex:1">
-          <span class="pill p-${vk}">${vlabel(j.verdict)}</span>
-          <span class=ttl> ${esc(j.title)}</span>
-          <div class=meta>${esc(j.company)} · ${esc(j.location||"")} ${vsrc}</div>
-        </div>
-      </div>
-      ${whyBullets(j.headline)}
-      ${qualsBlock(j)}
-      ${j.url?`<a class=link href="${esc(j.url)}" target=_blank rel=noopener>open verified JD ↗</a><br>`:""}
-      <div class=acts><span class=lbl>Your call:</span><input class=note placeholder="why? (optional)"></div>`;
-   const acts=el.querySelector(".acts");
-   ACTIONS.forEach(([a,label,cls])=>{
-     const b=document.createElement("button"); b.className="act "+cls; b.textContent=label;
-     b.addEventListener("click",()=>rec(j,a,el));
-     acts.appendChild(b);
-   });
-   L.appendChild(el);
+ const show=d.jobs.filter(j=>vkey(j.verdict)!=="dont");
+ const dont=d.jobs.filter(j=>vkey(j.verdict)==="dont");
+ if(!show.length) L.innerHTML="<div class=empty>No APPLY/STRETCH roles in this run. Widen discovery, or reveal the filtered-out roles below.</div>";
+ show.forEach(j=>L.appendChild(makeCard(j)));
+ if(dont.length){
+   const t=document.createElement("button"); t.className="toggle";
+   t.textContent=`▸ Show ${dont.length} filtered-out roles (DON'T APPLY) — for auditing`;
+   let open=false;
+   t.addEventListener("click",()=>{open=!open;
+     if(open){dont.forEach(j=>H.appendChild(makeCard(j)));t.textContent=`▾ Hide ${dont.length} filtered-out roles`;}
+     else{H.innerHTML="";t.textContent=`▸ Show ${dont.length} filtered-out roles (DON'T APPLY) — for auditing`;}});
+   L.appendChild(t);
  }
 }
 load();
@@ -197,11 +233,19 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, json.dumps({"error": "not found"}))
 
     def do_POST(self):
+        n = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(n) or b"{}"
+        if self.path.startswith("/api/undo"):
+            try:
+                d = json.loads(body)
+                removed = feedback.undo(d.get("job_id", ""))
+                return self._send(200, json.dumps({"ok": True, "removed": removed}))
+            except Exception as e:
+                return self._send(400, json.dumps({"ok": False, "error": str(e)}))
         if not self.path.startswith("/api/feedback"):
             return self._send(404, json.dumps({"error": "not found"}))
-        n = int(self.headers.get("Content-Length", 0))
         try:
-            d = json.loads(self.rfile.read(n) or b"{}")
+            d = json.loads(body)
             entry = feedback.record(d.get("job_id", ""), d.get("company", ""),
                                     d.get("title", ""), d.get("url", ""),
                                     d.get("action", ""), d.get("note", ""))
