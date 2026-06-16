@@ -138,11 +138,13 @@ def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_
                 outs.append(cli_adapter.score(prompt, cli=cli, on_failover=_note_failover))
             except Exception as e:
                 last_err = e
-        if not outs:
-            failures.append({"title": job.title, "company": job.company, "error": str(last_err)})
+        valid = [v for v in outs if isinstance(v.get("fit_score"), (int, float))]
+        if not valid:
+            failures.append({"title": job.title, "company": job.company,
+                             "error": str(last_err) if last_err else "no numeric fit_score returned"})
         else:
-            verdict = min(outs, key=_fit_of)            # conservative pick
-            fits = [_fit_of(v) for v in outs]
+            verdict = min(valid, key=_fit_of)           # conservative pick (valid samples only)
+            fits = [_fit_of(v) for v in valid]
             verdict["score_samples"] = len(outs)
             verdict["score_range"] = [min(fits), max(fits)]
             verdict.setdefault("company", job.company)

@@ -180,7 +180,7 @@ function makeCard(j){
  const vsrc=j.link_verified?`<span class=vsrc>✓ ${esc(j.link_source||"verified")}</span>`:"";
  el.innerHTML=
    `<div class=row1>
-      <div class="score s-${vk}">${(+j.fit_score).toFixed(1)}<small>${esc((j.score_range&&j.score_range[0]!=j.score_range[1])?j.score_range.join("–"):"")}</small></div>
+      <div class="score s-${vk}">${Number.isFinite(+j.fit_score)?(+j.fit_score).toFixed(1):"?"}<small>${esc((j.score_range&&j.score_range[0]!=j.score_range[1])?j.score_range.join("–"):"")}</small></div>
       <div style="flex:1">
         <span class="pill p-${vk}">${vlabel(j.verdict)}</span>
         <span class=ttl> ${esc(j.title)}</span>
