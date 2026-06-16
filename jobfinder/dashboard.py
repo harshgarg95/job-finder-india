@@ -69,7 +69,10 @@ PAGE = """<!doctype html><html lang=en><head><meta charset=utf-8>
  .vsrc{border:1px solid var(--line);border-radius:6px;padding:0 6px;margin-left:4px;font-size:11px;color:var(--mut)}
  ul.why{margin:12px 0 4px;padding-left:18px} ul.why li{margin:3px 0;color:#cfd5e0}
  .quals{margin:12px 0 4px;background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
- .qsum{font-size:12.5px;color:var(--mut);margin-bottom:8px}
+ .qsum{font-size:12.5px;color:var(--mut);cursor:pointer;list-style:none;outline:none}
+ .qsum::-webkit-details-marker{display:none}
+ .qsum::before{content:"▸ ";color:var(--mut)} details[open] .qsum::before{content:"▾ "}
+ details[open] .qsum{margin-bottom:8px} .hint{color:var(--mut);font-size:11px}
  .cmet{color:var(--met)} .cpart{color:var(--part)} .cmiss{color:var(--miss)}
  .qgrp{margin:6px 0} .qh{font-size:12px;font-weight:600;margin-bottom:2px}
  .qgrp ul{margin:0 0 4px;padding-left:20px} .qgrp li{margin:2px 0;font-size:12.5px;color:#cfd5e0}
@@ -120,9 +123,10 @@ function qualsBlock(j){
  const s=j.qualifications_summary||{met:g.met.length,partial:g.partial.length,missing:g.missing.length};
  const sec=(k,label,cls)=>g[k].length?`<div class=qgrp><div class="qh ${cls}">${label} (${g[k].length})</div><ul>`+
    g[k].map(q=>`<li>${esc(q.requirement)}${(q.evidence&&k!=='met')?` <span class=ev>— ${esc(q.evidence)}</span>`:''}</li>`).join("")+`</ul></div>`:"";
- return `<div class=quals><div class=qsum>Qualifications match — `+
-   `<b class=cmet>${s.met} met</b> · <b class=cpart>${s.partial} partial</b> · <b class=cmiss>${s.missing} missing</b></div>`+
-   sec("met","✓ Met","cmet")+sec("partial","~ Partial","cpart")+sec("missing","✗ Missing","cmiss")+`</div>`;
+ return `<details class=quals><summary class=qsum>Qualifications match — `+
+   `<b class=cmet>${s.met} met</b> · <b class=cpart>${s.partial} partial</b> · <b class=cmiss>${s.missing} missing</b>`+
+   `<span class=hint> · click to expand</span></summary>`+
+   sec("met","✓ Met","cmet")+sec("partial","~ Partial","cpart")+sec("missing","✗ Missing","cmiss")+`</details>`;
 }
 function skillsLine(j){
  const s=j.skills_check; if(!s) return "";

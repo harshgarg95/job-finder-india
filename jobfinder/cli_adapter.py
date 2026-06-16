@@ -98,9 +98,6 @@ def _extract_json(text: str) -> Optional[dict]:
     return None
 
 
-# A big prompt passed as a CLI argument can blow the OS arg limit (E2BIG); above
-# this size we deliver via stdin instead (full-JD prompts get large).
-SAFE_ARG = 16000
 # Errors that mean "this CLI is unavailable right now — try the next one."
 _FAILOVER_HINTS = ("quota", "rate limit", "rate-limit", "ratelimit", "429",
                    "exhausted", "resource_exhausted", "unauthor", "forbidden",
@@ -122,9 +119,10 @@ def _score_one(prompt: str, cli: str, *, timeout: int,
         raise RuntimeError(f"CLI '{cli}' not on PATH.")
 
     argv = [adapter.bin, *adapter.args]
-    # Stdin hardening: prefer stdin for stdin-delivery CLIs, and for arg-delivery
-    # CLIs whenever the prompt is large (avoids the arg-length limit on full JDs).
-    if adapter.delivery == "arg" and len(prompt) <= SAFE_ARG:
+    # Delivery is per-CLI: arg-delivery CLIs (e.g. gemini -p) REQUIRE the prompt
+    # as an argument — they error if it's only on stdin. They handle large args
+    # fine for our prompt sizes; the rare oversize case errors and fails over.
+    if adapter.delivery == "arg":
         argv.append(prompt)
         stdin_text = ""
     else:

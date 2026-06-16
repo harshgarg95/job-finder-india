@@ -156,15 +156,17 @@ def test_cli_failover_on_quota_error():
     os.environ.pop("JOBFINDER_CLI_FALLBACK", None)
 
 
-def test_cli_large_prompt_uses_stdin():
+def test_cli_delivery_arg_vs_stdin():
     from jobfinder import cli_adapter as CA
     seen = {}
     def runner(argv, stdin_text):
-        seen["argv_len"] = len(argv); seen["stdin_len"] = len(stdin_text)
+        seen["argv"] = list(argv); seen["stdin"] = stdin_text
         return '{"ok": 1}'
-    big = "x" * (CA.SAFE_ARG + 50)
-    CA.score(big, cli="gemini", runner=runner)  # gemini is arg-delivery
-    assert seen["stdin_len"] > CA.SAFE_ARG and seen["argv_len"] == 2  # prompt went to stdin, not argv
+    big = "x" * 30000
+    CA.score(big, cli="gemini", runner=runner)            # gemini = arg-delivery
+    assert big in seen["argv"] and seen["stdin"] == ""    # prompt is the ARG (gemini -p needs it)
+    CA.score(big, cli="claude", runner=runner)            # claude = stdin-delivery
+    assert seen["stdin"] == big                            # prompt via stdin
 
 
 def test_apify_url_builders_and_mappers_no_io():

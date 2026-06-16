@@ -590,3 +590,27 @@ same-group sibling = partial — LinkedIn's skill-expansion idea). Wired into
 prompt so requirement-matching is consistent + cheaper. The LLM stays the judge;
 this feeds it a clean normalized view. +1 test; 17/17.
 
+---
+
+## Dashboard UX overhaul + feedback simplification (owner feedback)
+
+**Date:** 2026-06-15.
+
+- **Unclickable-button bug fixed:** inline `onclick` used `JSON.stringify(action)`,
+  injecting double-quotes into a double-quoted HTML attribute → malformed. Rebuilt
+  buttons via `addEventListener`. Verified by a headless click.
+- **UI overhaul:** reasons rendered as bullets (not a paragraph); qualifications as
+  grouped Met/Partial/Missing bullets; verdict pills; score range; cleaner cards.
+- **Feedback simplified to the owner's 2-action model:** **Applied** or **Wouldn't
+  apply** (reason chips: wrong location/level/function/domain/comp, or "just
+  passing"). Dropped redundant good_match/interested. **Latest choice per job wins**
+  + **change/undo** (`feedback.undo` + `/api/undo`). Both actions suppress (you've
+  decided); "applied" = a tracked application.
+- **DON'T-APPLY hidden by default**, behind a "show filtered (for auditing)"
+  toggle — keeps the shortlist focused on APPLY/STRETCH while preserving the
+  audit view (the owner caught real bugs by seeing rejections).
+- **Deterministic skills cross-check:** `skills.match()` wired into scoring — each
+  role gets a `skills_check` (met/partial/missing from the local taxonomy) shown
+  beside the LLM qualifications. A consistent, no-LLM second opinion.
+- Verified headless (2 actions, reason chips, undo, toggle, no JS errors). 18/18.
+
