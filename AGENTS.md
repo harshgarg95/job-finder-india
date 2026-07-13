@@ -34,17 +34,22 @@ Parse the JSON. If `needs_onboarding` is true (a required file is missing, or
 `config/profile.yml`, `config/sources.yml`. (LLM choice + login are implicit — the user
 already opened their CLI.)
 
-When `needs_onboarding` is true, present **ONLY this restricted menu** — do **not** show the
-command-center Find-jobs / Scan options, and offer **no** "continue anyway" / score-without-a-
-résumé path (there is none):
+When `needs_onboarding` is true, **do NOT conduct onboarding yourself** and do NOT ask the setup
+questions in chat. Tell the user to run the one-time setup in **their own terminal**, then return:
 ```
-job-finder-india — a quick setup is needed first. Reply with the number:
-  1. Start onboarding (recommended)
-  2. Help — what onboarding collects and why
+Setup needed (one time). In YOUR terminal, run:
+    python -m jobfinder onboard
+It asks a few questions (arrow-key menus) and writes your résumé + profile for you.
+Then come back here and say "find me jobs".
 ```
-Routing: **1** → `modes/onboarding.md` · **2** → explain, then show this menu again. A run
-**cannot** proceed to `evaluate` / `scan` while `doctor` reports `needs_onboarding` — re-run
-`doctor --json` after onboarding and continue only once `needs_onboarding` is false.
+Offer only these two (numbered): **1.** I've run it — re-check   **2.** Help — what setup collects & why.
+Routing: **1** → re-run `python -m jobfinder doctor --json`; proceed only if `needs_onboarding` is
+now false (else say it's still not set up and show this again) · **2** → explain briefly, then show
+this again. There is **NO** "continue anyway" / score-without-a-résumé path, and you must **NEVER**
+tell the user to hand-edit YAML. A run **cannot** proceed to `evaluate` / `scan` while `doctor`
+reports `needs_onboarding`. (Advanced/automation fallback only: `python -m jobfinder onboard
+--answers <file.json>` writes the files non-interactively — but the terminal command above is the
+primary path.)
 
 ## Model check — do this on your first message
 Scoring is done **by you, in-session**, so **your model matters.** If you are running as a

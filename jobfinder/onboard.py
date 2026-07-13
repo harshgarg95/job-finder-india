@@ -34,10 +34,14 @@ _SEED_PAIRS = [
 ]
 
 
-def seed_config_files(force: bool = False) -> list[str]:
-    """Create any missing live config files from their shipped templates."""
+def seed_config_files(force: bool = False, skip: tuple = ()) -> list[str]:
+    """Create any missing live config files from their shipped templates. `skip`
+    names live paths to leave alone (onboarding skips config/profile.yml — that is
+    written from the user's answers, never seeded as a placeholder to proceed with)."""
     created = []
     for ex, live in _SEED_PAIRS:
+        if live in skip:
+            continue
         exp, livep = os.path.join(ROOT, ex), os.path.join(ROOT, live)
         if os.path.exists(exp) and (force or not os.path.exists(livep)):
             shutil.copyfile(exp, livep)
@@ -241,64 +245,155 @@ def _input(prompt: str, default: str = "") -> str:
     return v or default
 
 
-def _interactive() -> int:
-    # No-TTY refuse: an agent-spawned run has no keyboard, so do NOT silently
-    # seed-and-collect-nothing. Point to the deterministic --answers path instead.
-    if not sys.stdin.isatty():
-        print("This interactive setup needs a real terminal (a keyboard).", file=sys.stderr)
-        print("• Run it yourself:   python -m jobfinder onboard          (in YOUR terminal)", file=sys.stderr)
-        print("• From an AI agent:  collect the answers, then call:\n"
-              "                     python -m jobfinder onboard --answers <file.json>", file=sys.stderr)
-        return 2
+# ── Direct-run interactive onboarding (the USER runs `python -m jobfinder onboard`) ──
+# Arrow-key menus for the constrained fields via questionary when present; a plain
+# numbered input() menu otherwise. Reuses write_from_answers to write both files.
+_RESUME_CHOICES = [
+    "Paste résumé text (end with Ctrl-D)",
+    "Give a file path (.pdf / .docx / .md / .txt)",
+    "Paste LinkedIn profile text (end with Ctrl-D)",
+]
+_CEILING_CHOICES = ["Intern", "Junior", "Mid", "Senior", "Lead", "Manager", "Director"]
+_WORKMODE_CHOICES = ["Remote", "Hybrid", "On-site", "Open to a mix"]
+_WORKMODE_MAP = {"Remote": "remote", "Hybrid": "hybrid", "On-site": "onsite", "Open to a mix": "mix"}
 
-    print("── job-finder onboarding ──  (I'll write resume.md + config/profile.yml for you)\n")
-    seed_config_files()
-    a: dict = {}
-    # ── résumé ──
-    rpath = _input("Path to your résumé (.pdf/.docx/.md/.txt), or blank to paste: ")
-    if rpath:
-        a["resume_path"] = rpath
-    else:
-        print("Paste your résumé; finish with a single line: EOF")
-        buf = []
+
+def _split(s: str) -> list[str]:
+    return [x.strip() for x in (s or "").split(",") if x.strip()]
+
+
+def _select(question: str, choices: list[str], default: str | None = None) -> str:
+    """Arrow-key select via questionary if installed; else a plain numbered input() menu."""
+    try:
+        import questionary                     # optional dep — clean text fallback below if absent
+        ans = questionary.select(question, choices=choices, default=default).ask()
+        if ans is None:                        # user pressed Ctrl-C
+            raise KeyboardInterrupt
+        return ans
+    except ImportError:
+        print(question)
+        for i, c in enumerate(choices, 1):
+            print(f"   {i}. {c}")
         while True:
-            try:
-                ln = input()
-            except EOFError:
-                break
-            if ln.strip() == "EOF":
-                break
-            buf.append(ln)
-        a["resume_text"] = "\n".join(buf)
-    # ── profile ──
+            v = _input("Reply with the number: ")
+            if v.isdigit() and 1 <= int(v) <= len(choices):
+                return choices[int(v) - 1]
+            if v in choices:
+                return v
+            print("   (pick a number from the list)")
+
+
+def _read_pasted() -> str:
+    buf = []
+    while True:
+        try:
+            buf.append(input())
+        except EOFError:
+            break
+    return "\n".join(buf)
+
+
+def _ask_resume() -> dict:
+    choice = _select("How will you provide your résumé?", _RESUME_CHOICES)
+    idx = _RESUME_CHOICES.index(choice)
+    if idx == 1:                               # file path
+        return {"resume_path": _input("Résumé file path: ")}
+    print("Paste your résumé now, then press Ctrl-D:" if idx == 0
+          else "Paste your LinkedIn profile text now, then press Ctrl-D:")
+    return {"resume_text": _read_pasted()}
+
+
+def _ask_workmode(a: dict) -> None:
+    a["work_mode"] = _WORKMODE_MAP[_select("Work-mode:", _WORKMODE_CHOICES, default="Open to a mix")]
+    if a["work_mode"] in ("hybrid", "onsite", "mix"):
+        a["onsite_cities"] = _split(_input("On-site city/cities (comma-separated): "))
+
+
+def _collect_answers() -> dict:
+    a: dict = {}
+    if not os.path.exists(os.path.join(ROOT, "resume.md")):
+        a.update(_ask_resume())
     a["full_name"] = _input("Full name: ")
     a["email"] = _input("Email (optional): ")
     a["base_city"] = _input("Base city (e.g. 'Hyderabad, India'): ")
-    a["target_roles"] = [s.strip() for s in _input("Target roles (comma-separated): ").split(",") if s.strip()]
+    a["target_roles"] = _split(_input("Target roles (comma-separated): "))
     a["years_total"] = _num(_input("Years total experience: "))
     a["years_in_function"] = _num(_input("Years in your target function: "))
-    a["honest_ceiling"] = _input("Honest ceiling (intern|junior|mid|senior|lead|manager|director): ")
-    print("Work-mode:   1) Remote   2) Hybrid   3) On-site   4) Open to a mix")
-    a["work_mode"] = {"1": "remote", "2": "hybrid", "3": "onsite", "4": "mix"}.get(_input("Pick the number: "), "mix")
-    if a["work_mode"] in ("hybrid", "onsite", "mix"):
-        a["onsite_cities"] = [s.strip() for s in _input("On-site city/cities (comma-separated): ").split(",") if s.strip()]
-    a["willing_to_relocate"] = _input("Open to relocating? (y/N): ").lower().startswith("y")
+    a["honest_ceiling"] = _select("Honest ceiling (highest level you can credibly claim today):",
+                                  _CEILING_CHOICES, default="Mid").lower()
+    _ask_workmode(a)
+    a["willing_to_relocate"] = _select("Open to relocating?", ["No", "Yes"], default="No") == "Yes"
     a["floor_ctc_lpa"] = _num(_input("Comp floor / walk-away (LPA): "))
     tgt = _num(_input("Target comp (LPA, optional): "))
     if tgt:
         a["target_ctc_lpa"] = tgt
     hc = _input("Hard constraints (comma-separated, optional): ")
     if hc:
-        a["hard_constraints"] = [s.strip() for s in hc.split(",") if s.strip()]
+        a["hard_constraints"] = _split(hc)
+    return a
 
-    res = write_from_answers(a)
-    if res.get("error"):
-        print(f"\n✗ {res['error']}")
-        for pr in res.get("problems", []):
-            print(f"  - {pr}")
+
+def _refill(a: dict, problems: list[str]) -> None:
+    """Re-ask ONLY the fields named in the validation problems (loop-until-valid)."""
+    t = " ".join(problems).lower()
+    if "résumé" in t or "resume" in t:
+        a.pop("resume_text", None)
+        a.pop("resume_path", None)
+        a.update(_ask_resume())
+    if "full_name" in t:
+        a["full_name"] = _input("Full name: ")
+    if "base_city" in t:
+        a["base_city"] = _input("Base city: ")
+    if "target_roles" in t:
+        a["target_roles"] = _split(_input("Target roles (comma-separated): "))
+    if "years_total" in t:
+        a["years_total"] = _num(_input("Years total experience: "))
+    if "years_in_function" in t:
+        a["years_in_function"] = _num(_input("Years in your target function: "))
+    if "honest_ceiling" in t:
+        a["honest_ceiling"] = _select("Honest ceiling:", _CEILING_CHOICES).lower()
+    if "work_mode" in t or "onsite_cities" in t:
+        _ask_workmode(a)
+    if "floor_ctc_lpa" in t:
+        a["floor_ctc_lpa"] = _num(_input("Comp floor / walk-away (LPA): "))
+
+
+def _interactive() -> int:
+    # No-TTY refuse: an agent-spawned run has no keyboard, so do NOT silently
+    # seed-and-collect-nothing. Point to the deterministic --answers path instead.
+    if not sys.stdin.isatty():
+        print("This interactive setup needs a real terminal (a keyboard).", file=sys.stderr)
+        print("• Run it yourself:   python -m jobfinder onboard          (in YOUR terminal)", file=sys.stderr)
+        print("• From an AI agent:  python -m jobfinder onboard --answers <file.json>", file=sys.stderr)
+        return 2
+
+    prof = os.path.join(ROOT, "config", "profile.yml")
+    if os.path.exists(prof) and not _profile_is_placeholder(prof):
+        if _select("You already have a profile. Redo setup?", ["No, keep it", "Yes, redo"]) == "No, keep it":
+            print("Keeping your existing profile. Nothing changed.")
+            return 0
+
+    print("── job-finder onboarding ──  (I'll write resume.md + config/profile.yml for you)\n")
+    seed_config_files(skip=("config/profile.yml",))   # config defaults; profile comes from answers
+    try:
+        a = _collect_answers()
+        while True:                            # loop-until-valid: cannot finish without required fields
+            res = write_from_answers(a, force=True)
+            if not res.get("error"):
+                break
+            print(f"\n✗ {res['error']}")
+            for pr in res.get("problems", []):
+                print(f"   - {pr}")
+            print("Let's fix that.\n")
+            _refill(a, res.get("problems", []))
+    except (KeyboardInterrupt, EOFError):
+        print("\n(cancelled — nothing written)")
         return 1
+
     print(f"\n✓ wrote {', '.join(res['wrote'])}")
-    print("→ Review config/profile.yml — especially function.out_of_scope (it drives the wrong-function gate).")
+    oos = ", ".join(_answers_to_profile(a)["function"]["out_of_scope"])
+    print(f"→ Roles you'll be gated OUT of (function.out_of_scope): {oos}")
+    print("  Edit config/profile.yml if that's wrong — it drives the wrong-function gate.")
     print("→ Run `python -m jobfinder doctor` to confirm READY, then say 'find me jobs' in your CLI.")
     return 0
 

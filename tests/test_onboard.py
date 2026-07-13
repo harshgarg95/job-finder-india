@@ -120,6 +120,81 @@ def test_no_tty_interactive_refuses():
     print("✓ no-TTY _interactive() refuses (exit 2), no silent no-op")
 
 
+def _run_direct(select_map, input_fn, resume="x" * 400):
+    """Drive _interactive() with scripted _select/_input + a simulated TTY. Returns rc."""
+    saved = (onboard._select, onboard._input, onboard._read_pasted)
+    orig_stdin = sys.stdin
+    onboard._select = lambda q, choices, default=None: next(v for k, v in select_map.items() if k in q.lower())
+    onboard._input = input_fn
+    onboard._read_pasted = lambda: resume
+    try:
+        sys.stdin = type("F", (), {"isatty": lambda s: True})()
+        return onboard._interactive()
+    finally:
+        onboard._select, onboard._input, onboard._read_pasted = saved
+        sys.stdin = orig_stdin
+
+
+def test_direct_run_writes_valid_profile_and_resume():
+    d = _root()
+    txt = {"full name": "Harsh Garg", "email": "h@x.com", "base city": "Hyderabad, India",
+           "target roles": "AI Delivery Manager, TPM - AI", "years total": "8",
+           "target function": "2.5", "floor": "20", "target comp": "28", "hard constraints": ""}
+    rc = _run_direct(
+        {"résumé": onboard._RESUME_CHOICES[0], "ceiling": "Manager", "work-mode": "Remote", "relocat": "No"},
+        lambda p, default="": next((v for k, v in txt.items() if k in p.lower()), ""))
+    assert rc == 0
+    prof = yaml.safe_load(open(os.path.join(d, "config", "profile.yml"), encoding="utf-8"))
+    assert prof["candidate"]["full_name"] == "Harsh Garg"
+    assert prof["location"]["remote_ok"] is True and prof["seniority"]["honest_ceiling"] == "manager"
+    assert prof["target_roles"]["primary"][0] == "AI Delivery Manager"
+    assert os.path.exists(os.path.join(d, "resume.md"))
+    print("✓ direct-run onboard writes a valid profile.yml + resume.md (arrow-select flow)")
+
+
+def test_direct_run_loops_until_required_present():
+    d = _root()
+    calls = {"floor": 0}
+
+    def input_fn(p, default=""):
+        pl = p.lower()
+        if "floor" in pl:
+            calls["floor"] += 1
+            return "" if calls["floor"] == 1 else "20"     # missing first pass → re-asked
+        return {"full name": "H G", "email": "", "base city": "Hyderabad, India",
+                "target roles": "AI PM", "years total": "8", "target function": "2.5",
+                "target comp": "", "hard constraints": ""}.get(
+            next((k for k in ("full name", "email", "base city", "target roles", "years total",
+                              "target function", "target comp", "hard constraints") if k in pl), ""), "")
+
+    rc = _run_direct({"résumé": onboard._RESUME_CHOICES[0], "ceiling": "Mid",
+                      "work-mode": "Remote", "relocat": "No"}, input_fn, resume="y" * 400)
+    assert rc == 0 and calls["floor"] >= 2                  # re-asked the missing floor, then wrote
+    prof = yaml.safe_load(open(os.path.join(d, "config", "profile.yml"), encoding="utf-8"))
+    assert prof["compensation"]["floor_ctc_lpa"] == 20
+    print("✓ direct-run loops until required fields present (re-asks, then writes)")
+
+
+def test_resume_choices_exactly_three_no_template():
+    assert len(onboard._RESUME_CHOICES) == 3
+    joined = " ".join(onboard._RESUME_CHOICES).lower()
+    for banned in ("template", "sample", "describe", "draft", "starter"):
+        assert banned not in joined, banned
+    assert "paste" in joined and "path" in joined and "linkedin" in joined
+    print("✓ résumé options are exactly paste / path / LinkedIn — no template/sample/describe")
+
+
+def test_agents_gate_routes_to_terminal_no_bypass():
+    agents = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "AGENTS.md")
+    txt = open(agents, encoding="utf-8").read()
+    low = txt.lower()
+    assert "python -m jobfinder onboard" in txt                 # routes to the direct-run command
+    assert "do not conduct onboarding yourself" in low          # agent does not conduct it
+    assert "i've run it" in low                                 # only proceed option = re-check
+    assert "hand-edit yaml" in low                              # YAML-edit prohibition is stated
+    print("✓ AGENTS.md gate routes to direct-run onboard; no-bypass + no-hand-edit stated")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

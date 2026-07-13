@@ -6,6 +6,10 @@
 requests>=2.31        # ATS + Google Jobs + Apify HTTP calls
 PyYAML>=6.0           # profile.yml + ats_tenants.india.yml
 
+# ── Onboarding (direct-run `python -m jobfinder onboard`) arrow-key menus ────
+# Optional: onboarding falls back to a plain numbered input() menu if absent.
+questionary>=2.0      # arrow-key select for the constrained onboarding fields
+
 # ── Optional resume parsing (only needed if your resume is .docx / .pdf) ────
 # Plain .txt / .md resumes need nothing extra.
 python-docx>=1.1      # .docx resumes
