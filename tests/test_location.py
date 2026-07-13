@@ -71,6 +71,21 @@ def test_noncoarse_bengaluru_still_gates_and_hyderabad_ok():
     print("✓ already-tagged Bengaluru gates; Hyderabad passes (existing gate preserved)")
 
 
+def test_piped_and_spaced_remote_india_resolves_remote():
+    # The Abacus.AI case that the benchmark surfaced: "(Remote | India)" in the title
+    # must resolve remote-India, NOT location_unverified.
+    jd = ("Technical Program Manager (Remote | India) About Abacus.AI. We're looking for an "
+          "exceptional Technical Program Manager to drive execution across engineering, product.")
+    st, _, _ = LOC.regate(_job("India", jd), PROFILE)
+    assert st == "ok"
+    # the spaced / piped / parenthesized variants all read as remote
+    for s in ("(Remote | India)", "Remote - India", "Remote, India", "India (Remote)", "Remote/India"):
+        assert LOC.looks_remote(s), s
+    # and a plain onsite city with no such phrasing still does NOT read as remote
+    assert not LOC.looks_remote("Bengaluru, Karnataka, India. Full time.")
+    print("✓ spaced/piped remote-India phrasings resolve remote (Abacus.AI fix)")
+
+
 def test_helpers():
     assert LOC.is_coarse("India") and LOC.is_coarse("") and not LOC.is_coarse("Pune, India")
     assert LOC.derive_cities("Work Location: Pune. Also we have a Mumbai office.")[0] == "pune"

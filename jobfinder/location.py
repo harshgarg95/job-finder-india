@@ -34,7 +34,12 @@ _REMOTE_RE = re.compile(
     r"\b(?:fully[- ]remote|remote[- ]first|100%\s*remote|work\s+from\s+(?:home|anywhere)|"
     r"remote\s+(?:position|role|opportunity|work)|wfh)\b"
     r"|\b(?:job|work)\s+location\b[\s:\-–]{0,4}remote\b"
-    r"|\b(?:employment\s+type|work\s+type|work\s+mode|type)\b[\s:\-–]{0,4}remote\b",
+    r"|\b(?:employment\s+type|work\s+type|work\s+mode|type)\b[\s:\-–]{0,4}remote\b"
+    # Location-slug phrasings where remote sits next to India (either order, tight):
+    # "(Remote | India)", "Remote - India", "Remote, India", "India (Remote)", "Remote/India".
+    r"|\bremote\b[\s|,/\-–()]{0,6}india\b"
+    r"|\bindia\b[\s|,/\-–()]{0,6}\(?\s*remote\b"
+    r"|\(\s*remote\s*[|)]",                    # a parenthesized "(Remote |" / "(Remote)" work-mode tag
     re.I,
 )
 
