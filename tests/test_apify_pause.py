@@ -108,6 +108,57 @@ def test_paused_channel_auto_resumes_when_probe_says_ok():
     os.environ.pop("APIFY_TOKEN", None)
 
 
+def test_resolve_disabled():
+    _isolate_state()
+    assert AP.resolve({"sources": {"apify": {"enabled": False}}})["state"] == "disabled"
+
+
+def test_resolve_no_token():
+    _isolate_state()
+    os.environ.pop("APIFY_TOKEN", None)
+    assert AP.resolve({"sources": {"apify": {"enabled": True}}})["state"] == "no-token"
+
+
+def test_resolve_active_clears_any_pause():
+    _isolate_state()
+    os.environ["APIFY_TOKEN"] = "dummy"
+    AP.pause("stale pause")
+    AP.probe = lambda t: (True, "$5.00 of $5 remaining")
+    r = AP.resolve({"sources": {"apify": {"enabled": True}}})
+    assert r["state"] == "active" and AP.is_paused() is False
+    os.environ.pop("APIFY_TOKEN", None)
+
+
+def test_resolve_paused_no_credits_persists():
+    _isolate_state()
+    os.environ["APIFY_TOKEN"] = "dummy"
+    AP.probe = lambda t: (False, "$0.02 of $5 remaining, cycle resets 2026-07-05")
+    r = AP.resolve({"sources": {"apify": {"enabled": True}}})
+    assert r["state"] == "paused-no-credits" and AP.is_paused() is True
+    os.environ.pop("APIFY_TOKEN", None)
+
+
+def test_resolve_error_is_transient_not_paused():
+    _isolate_state()
+    os.environ["APIFY_TOKEN"] = "dummy"
+    AP.probe = lambda t: (None, "probe error: timeout")
+    r = AP.resolve({"sources": {"apify": {"enabled": True}}})
+    assert r["state"] == "error" and AP.is_paused() is False   # transient → re-probe next run
+    os.environ.pop("APIFY_TOKEN", None)
+
+
+def test_resolve_auto_resumes_when_credits_return():
+    _isolate_state()
+    os.environ["APIFY_TOKEN"] = "dummy"
+    AP.probe = lambda t: (False, "no credits")
+    assert AP.resolve({"sources": {"apify": {"enabled": True}}})["state"] == "paused-no-credits"
+    assert AP.is_paused() is True
+    AP.probe = lambda t: (True, "$5 remaining")                # next run: credits back
+    assert AP.resolve({"sources": {"apify": {"enabled": True}}})["state"] == "active"
+    assert AP.is_paused() is False                              # auto-resumed
+    os.environ.pop("APIFY_TOKEN", None)
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

@@ -23,6 +23,7 @@ import yaml
 
 from . import doctor
 from .dedup import dedupe
+from .discovery import apify
 from .discovery.base import Query
 from .discovery.registry import discover
 from .filters import keyword_prefilter, location_ok
@@ -142,8 +143,18 @@ def main(argv=None) -> int:
     print(f"job-finder: discovering for titles={query.titles} location={query.location!r}")
     print(f"profile: {profile['_path']}  ·  run: {run_cfg['_path']}  ·  sources: {sources['_path']}")
 
+    # Start-of-run, read-only Apify resolution BEFORE discovery (cheap probe, no
+    # scrape). Apify stays OPTIONAL — any non-active state just runs ATS-only.
+    cfg["apify_resolved"] = apify.resolve(cfg)
+    _ar = cfg["apify_resolved"]
+    print(f"apify channel: {_ar['state']}" + (f" — {_ar['reason']}" if _ar.get("reason") else ""))
+
     raw, reports = discover(query, cfg)
     total = print_report(reports)
+    if (cfg.get("apify_resolved") or {}).get("state") != "active":
+        print(f"ℹ Apify {cfg['apify_resolved']['state']} — optional India-board coverage "
+              "(Naukri/LinkedIn/Indeed) is off; running on the free ATS scan only. "
+              "(Add APIFY_TOKEN to .env + enable in config/sources.yml to include it.)")
 
     enabled_channels = [r for r in reports if r.enabled]
     broke = [r for r in enabled_channels if r.errors and r.count == 0]

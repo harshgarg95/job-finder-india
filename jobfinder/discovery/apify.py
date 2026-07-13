@@ -224,15 +224,25 @@ USAGE_MONTHLY = "https://api.apify.com/v2/users/me/usage/monthly"
 _MIN_HEADROOM_USD = 0.10
 
 
-def probe(token: str) -> tuple[bool, str]:
-    """Cheap, read-only auto-resume check. Returns (credits_available, note) from
-    the real Apify usage fields. Falls back to optimistic-resume if the plan does
-    not expose usage (the next fetch would 402 and re-pause — self-correcting)."""
+def probe(token: str) -> tuple[bool | None, str]:
+    """Cheap, read-only credit/account check (NOT a scrape). Returns
+    (available, note):  True = credits remain, False = exhausted, None = could
+    not determine (network/HTTP error → treat as transient, re-probe next run).
+
+    Reads (verified live against this account, 2026-06-18):
+      • GET /v2/users/me           → data.plan.maxMonthlyUsageUsd   (monthly cap, USD)
+      • GET /v2/users/me/usage/monthly
+            → data.totalUsageCreditsUsdAfterVolumeDiscount          (consumed this cycle)
+            → data.usageCycle.endAt                                 (when it resets)
+      remaining = maxMonthlyUsageUsd − totalUsageCreditsUsdAfterVolumeDiscount
+    """
     headers = {"Authorization": f"Bearer {token}"}
     try:
         me = requests.get(USERS_ME, headers=headers, timeout=20)
         if me.status_code != 200:
-            return (not is_credit_or_quota_error(me.status_code, me.text)), f"users/me HTTP {me.status_code}"
+            if is_credit_or_quota_error(me.status_code, me.text):
+                return False, f"users/me HTTP {me.status_code} (credits/quota)"
+            return None, f"users/me HTTP {me.status_code}"
         plan = ((me.json() or {}).get("data") or {}).get("plan") or {}
         limit = plan.get("maxMonthlyUsageUsd")
 
@@ -243,19 +253,61 @@ def probe(token: str) -> tuple[bool, str]:
             used = ud.get("totalUsageCreditsUsdAfterVolumeDiscount")
             resets = ((ud.get("usageCycle") or {}).get("endAt") or "")[:10]
     except Exception as e:  # noqa: BLE001
-        return False, f"probe failed: {e}"
+        return None, f"probe error: {e}"
 
     if isinstance(limit, (int, float)) and isinstance(used, (int, float)):
-        available = (limit - used) >= _MIN_HEADROOM_USD
-        note = f"used ${used:.2f}/${limit:.0f}" + (f", cycle resets {resets}" if resets else "")
+        remaining = limit - used
+        available = remaining >= _MIN_HEADROOM_USD
+        note = f"${remaining:.2f} of ${limit:.0f} remaining" + (f", cycle resets {resets}" if resets else "")
         return available, note
-    return True, "account reachable (usage not exposed)"
+    return True, "account reachable (usage fields not exposed)"
+
+
+def resolve(cfg: dict) -> dict:
+    """Start-of-run, read-only resolution of the Apify channel — call this BEFORE
+    discovery. Cheap probe only (no scrape). Returns:
+        {"state": active | no-token | paused-no-credits | error | disabled,
+         "reason": str, "credits": str|None}
+    Side effects (state only, never raises): persists a pause on no-credits, and
+    auto-resumes (clears the pause) the moment a probe shows credits are back — so
+    the NEXT run recovers automatically. Apify is always OPTIONAL: any non-active
+    state just means 'skip Apify, run ATS-only'.
+    """
+    sub = _sources_apify(cfg)
+    if not sub.get("enabled"):
+        return {"state": "disabled", "reason": "off in config/sources.yml", "credits": None}
+    token = os.environ.get("APIFY_TOKEN")
+    if not token:
+        return {"state": "no-token", "reason": "no APIFY_TOKEN in .env", "credits": None}
+
+    available, note = probe(token)
+    if available is None:                                   # transient — re-probe next run
+        return {"state": "error", "reason": note, "credits": None}
+    if available:
+        was_paused = is_paused()
+        if was_paused:
+            resume()                                        # credits returned → auto-resume
+        return {"state": "active",
+                "reason": ("credits returned — auto-resumed; " + note) if was_paused else note,
+                "credits": note}
+    pause(f"no credits ({note})")                           # persist; auto-resumes when probe ok
+    return {"state": "paused-no-credits", "reason": note, "credits": note}
 
 
 class ApifyProvider:
     id = "apify"
 
     def enabled(self, cfg: dict) -> bool:
+        # Prefer the start-of-run resolution (run.py calls resolve() and stashes it),
+        # so we don't probe twice. Only "active" runs the channel.
+        resolved = cfg.get("apify_resolved")
+        if isinstance(resolved, dict) and resolved.get("state"):
+            if resolved["state"] == "active":
+                return True
+            self._skip = f"{resolved['state']} ({resolved.get('reason', '')})"
+            return False
+
+        # Fallback (resolve() not called): self-contained enable + auto-resume.
         sub = _sources_apify(cfg)
         if not sub.get("enabled"):
             self._skip = "off in config/sources.yml (set enabled: true + APIFY_TOKEN in .env)"
