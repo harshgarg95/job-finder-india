@@ -331,6 +331,18 @@ def cmd_live(argv: list[str]) -> int:
     return 0
 
 
+def cmd_benchmark(argv: list[str]) -> int:
+    """Score the hand-labeled benchmark CSV: rubric vs the keyword baseline
+    (agreement · false-APPLY · false-DON'T · precision/recall/F1), side by side."""
+    ap = argparse.ArgumentParser(prog="jobfinder benchmark")
+    ap.add_argument("--csv", default=None, help="labeling.csv (default data/benchmark/labeling.csv)")
+    a = ap.parse_args(argv)
+    from . import benchmark as B
+    m = B.score_labeling(a.csv or B.LABELING)
+    print(B.format_report(m))
+    return 1 if m.get("error") else 0
+
+
 HANDLERS = {"discover": cmd_discover, "prescreen": cmd_prescreen,
             "enrich": cmd_enrich, "tracker": cmd_tracker, "live": cmd_live,
-            "preferences": cmd_preferences}
+            "preferences": cmd_preferences, "benchmark": cmd_benchmark}

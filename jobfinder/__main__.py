@@ -51,7 +51,8 @@ def main(argv=None) -> int:
         print(f"recorded: {label} — {a.company} {a.title}".rstrip())
         return 0
 
-    if argv and argv[0] in ("discover", "prescreen", "enrich", "tracker", "live", "preferences"):
+    if argv and argv[0] in ("discover", "prescreen", "enrich", "tracker", "live",
+                            "preferences", "benchmark"):
         from .agent_tools import HANDLERS
         return HANDLERS[argv[0]](argv[1:])
 
