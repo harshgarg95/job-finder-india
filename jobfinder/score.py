@@ -89,12 +89,14 @@ def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_
                    funnel: dict | None = None) -> int:
     from . import feedback
     from . import skills as skills_mod
+    from . import verify
 
     run_cfg = run_cfg or {}
     scoring_cfg = run_cfg.get("scoring", {}) or {}
     top_n = int(scoring_cfg.get("top_n", 10))
     samples = int(scoring_cfg.get("samples", 3))
     timeout = int(scoring_cfg.get("timeout_seconds", 300))
+    full_score_top_n = int(scoring_cfg.get("full_score_top_n", 15))   # FIX B — cap full-scored jobs
 
     resume_text = load_resume(resume_path)
     candidate_skills = skills_mod.extract(resume_text)   # normalized once (structured profile)
@@ -121,7 +123,8 @@ def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_
                 e = json.loads(ln)
             except json.JSONDecodeError:
                 continue
-            if e.get("job_id") in current_ids and isinstance(e.get("fit_score"), (int, float)):
+            if e.get("job_id") in current_ids and (isinstance(e.get("fit_score"), (int, float))
+                                                    or e.get("unverifiable")):
                 done[e["job_id"]] = e
     with open(scored_path, "w", encoding="utf-8") as f:   # rewrite clean (drop stale)
         for e in done.values():
@@ -141,16 +144,33 @@ def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_
     if lessons:
         print(f"  feedback: replaying {len(fb)} prior correction(s) into scoring")
 
-    print(f"\n── Scoring {len(jobs)} prescreened jobs via your AI CLI "
+    # FIX B — full-score only the strongest by prescreen rank (jobs is already ranked).
+    # The rest are reported as "prescreen-filtered (not individually scored)".
+    prescreened_all = [j.to_dict() for j in jobs]
+    score_set = jobs[:full_score_top_n] if full_score_top_n else list(jobs)
+
+    print(f"\n── Full-scoring the top {len(score_set)} of {len(jobs)} prescreened jobs via your AI CLI "
           f"({cli or os.environ.get('JOBFINDER_CLI') or 'auto-detect'}), {samples} sample(s) each ──")
     enriched = 0
-    for i, job in enumerate(jobs, 1):
+    for i, job in enumerate(score_set, 1):
         if job.id in done:                 # resume: already scored, skip (and skip enrich)
             continue
         # Deep-fetch the full JD if we only have a thin snippet (so the scorer
         # sees buried gating requirements, not a summary). Bounded set → bounded fetches.
         if job_fetcher.enrich(job):
             enriched += 1
+        # FIX A — verifiability gate: never score a job we couldn't actually read
+        # (empty/too-thin JD, or a non-job link). Route it to "Couldn't verify".
+        vstatus, vreason = verify.classify(job.url, job.description)
+        if vstatus != "ok":
+            rec = {"job_id": job.id, "title": job.title, "company": job.company,
+                   "url": job.url, "location": job.location, "source": job.source,
+                   "link_source": job.link_source, "unverifiable": True,
+                   "verify_status": vstatus, "reason": vreason}
+            done[job.id] = rec
+            ckpt.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            ckpt.flush()
+            continue
         prompt = build_prompt(resume_text, profile, job, lessons, candidate_skills)
         # Self-consistency: score N times, keep the MOST CONSERVATIVE (lowest)
         # result. Single-pass LLM scores vary; honest scoring errs low.
@@ -202,7 +222,7 @@ def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_
             ckpt.write(json.dumps(verdict, ensure_ascii=False) + "\n")
             ckpt.flush()                   # crash-safe: each job persisted immediately
         if i % 10 == 0:
-            print(f"   scored {len(done)}/{len(jobs)} (failures: {len(failures)}, cost so far: ${total_cost:.2f})")
+            print(f"   scored {len(done)}/{len(score_set)} (failures: {len(failures)}, cost so far: ${total_cost:.2f})")
 
     ckpt.close()
     scored = list(done.values())
@@ -214,9 +234,13 @@ def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_
             print(f"   ⚠ {f['title']}: {f['error']}")
         return 2
 
-    scored.sort(key=lambda v: (-float(v.get("fit_score", 0)), len(v.get("caps_applied", []))))
+    scored.sort(key=lambda v: (-float(v.get("fit_score", 0)), len(v.get("caps_applied") or [])))
     _update_tracker(scored)
-    _write_outputs(scored, failures, out_dir, top_n, total_cost=total_cost, funnel=funnel)
+    from . import state as _state
+    started_at = _state.read("run_timing").get("started_at")
+    _write_outputs(scored, failures, out_dir, top_n, total_cost=total_cost, funnel=funnel,
+                   prescreened=prescreened_all, full_score_top_n=full_score_top_n,
+                   started_at=started_at)
     return 0
 
 
@@ -224,6 +248,7 @@ def _update_tracker(scored: list[dict]) -> None:
     """Register EVERY scored job in the markdown tracker — the single source of
     truth. Merges across runs by job_id (latest score wins) via a jsonl store,
     then renders data/tracker.md. User Layer (never leaves the machine)."""
+    scored = [v for v in scored if not v.get("unverifiable")]   # tracker = scored jobs only
     os.makedirs(DATA, exist_ok=True)
     store = os.path.join(DATA, "tracker.jsonl")
     md = os.path.join(DATA, "tracker.md")
@@ -286,15 +311,36 @@ def _update_tracker(scored: list[dict]) -> None:
 
 
 def _write_outputs(scored: list[dict], failures: list[dict], out_dir: str, top_n: int,
-                   total_cost: float = 0.0, funnel: dict | None = None) -> None:
+                   total_cost: float = 0.0, funnel: dict | None = None,
+                   prescreened: list[dict] | None = None,
+                   full_score_top_n: int | None = None,
+                   started_at: str | None = None) -> None:
     with open(os.path.join(out_dir, "scored.jsonl"), "w", encoding="utf-8") as f:
         for v in scored:
             f.write(json.dumps(v, ensure_ascii=False) + "\n")
 
+    # ── Verifiability gate (FIX A): a job the tool couldn't read (empty JD, or a
+    #    non-job link) MUST NOT appear as APPLY/STRETCH, whatever its score. Move such
+    #    records to the "Couldn't verify" bucket. The mode also avoids scoring them;
+    #    this re-enforces the link check at render (belt-and-suspenders). ──
+    from . import verify
+    couldnt = [v for v in scored if v.get("unverifiable")]
+    _kept = []
+    for v in (x for x in scored if not x.get("unverifiable")):
+        st, reason = verify.classify(v.get("url", ""), None)   # URL-only re-check at render
+        if st == "non_job_link":
+            couldnt.append({**v, "unverifiable": True, "reason": reason,
+                            "withheld_score": v.get("fit_score")})
+        else:
+            _kept.append(v)
+
+    # Distribution counts only the kept, verified verdicts.
     dist = {"APPLY": 0, "STRETCH": 0, "DON'T APPLY": 0}
-    for v in scored:
-        dist[v.get("verdict", "DON'T APPLY")] = dist.get(v.get("verdict", "DON'T APPLY"), 0) + 1
+    for v in _kept:
+        vd = v.get("verdict", "DON'T APPLY")
+        dist[vd] = dist.get(vd, 0) + 1
     n_apply, n_stretch, n_no = dist["APPLY"], dist["STRETCH"], dist["DON'T APPLY"]
+    n_scored = n_apply + n_stretch + n_no
 
     def _provider(v: dict) -> str:
         # "employer-ats:greenhouse" / "ats:greenhouse" -> "greenhouse"; "apify:naukri" -> "naukri"
@@ -314,19 +360,19 @@ def _write_outputs(scored: list[dict], failures: list[dict], out_dir: str, top_n
     lines = ["# Honest results — fit first", ""]
     if funnel:
         lines.append(f"**Funnel:** raw {funnel.get('raw','?')} → candidates {funnel.get('candidates','?')} "
-                     f"→ prescreened {funnel.get('prescreened','?')} → scored {len(scored)}")
+                     f"→ prescreened {funnel.get('prescreened','?')} → full-scored {n_scored}")
         if funnel.get("truncated_from"):
             lines.append(f"> Prescreen kept {funnel['truncated_from']} jobs; capped to "
                          f"{funnel.get('prescreened')} (run.yml `max_llm_jobs`) — not silent.")
         lines.append("")
     fail_note = f" · {len(failures)} failed to score" if failures else ""
     cost_note = f" · est. cost ${total_cost:.2f}" if total_cost else " · cost: n/a (local/free CLI)"
-    lines.append(f"Scored {len(scored)} jobs — "
+    lines.append(f"Full-scored {n_scored} jobs — "
                  f"{n_apply} APPLY · {n_stretch} STRETCH · {n_no} DON'T APPLY{fail_note}{cost_note}")
     lines.append("")
 
-    apply_stretch = [v for v in scored if v.get("verdict") in ("APPLY", "STRETCH")]
-    filtered = [v for v in scored if v.get("verdict") not in ("APPLY", "STRETCH")]
+    apply_stretch = [v for v in _kept if v.get("verdict") in ("APPLY", "STRETCH")]
+    filtered = [v for v in _kept if v.get("verdict") not in ("APPLY", "STRETCH")]
 
     def _detail(i, v):
         """Full, UNTRUNCATED reasoning + resume-line ↔ JD-requirement citations."""
@@ -379,6 +425,21 @@ def _write_outputs(scored: list[dict], failures: list[dict], out_dir: str, top_n
         lines += ["", "_Nothing cleared the 4.0 apply bar this run. The closest near-misses are in "
                   "'Filtered out' below — shown honestly, not promoted to fill space._"]
 
+    # ── ⚠️ Couldn't verify — the tool couldn't read a real JD, or the link isn't a
+    #    specific posting. NOT recommended, NOT scored (any provisional score withheld). ──
+    lines += ["", f"## ⚠️ Couldn't verify — check manually ({len(couldnt)})"]
+    if couldnt:
+        lines += ["", "_These couldn't be confirmed: an empty/too-thin JD, or a link that's a bare "
+                  "domain / careers-list page rather than a specific posting. They are **not** scored and "
+                  "**not** recommended — open each and check it yourself._",
+                  "", "| Why unverifiable | Title | Company | Link |",
+                  "|------------------|-------|---------|------|"]
+        for v in couldnt:
+            why = _clean(v.get("reason") or "could not verify")[:80]
+            if v.get("withheld_score") is not None:
+                why += f" · provisional {float(v['withheld_score']):.1f} withheld"
+            lines.append(f"| {why} | {_clean(v.get('title'))} | {_clean(v.get('company'))} | {_link(v)} |")
+
     # ── Secondary: everything filtered out, compact, with the one-line WHY ───
     lines += ["", f"## Filtered out — and why ({len(filtered)} roles, kept for transparency)"]
     if filtered:
@@ -394,10 +455,59 @@ def _write_outputs(scored: list[dict], failures: list[dict], out_dir: str, top_n
                          f"| {_clean(v.get('title'))} | {_clean(v.get('company'))} "
                          f"| {_clean(why)[:140]} | {_link(v)} |")
 
+    # ── Prescreen-filtered: cleared the deterministic prescreen but ranked below the
+    #    full-score cutoff → NOT individually LLM-scored. Shown with rank + reason. ──
+    pf = []
+    if prescreened is not None:
+        scored_ids = {v.get("job_id") for v in scored}
+        pf = [(rank, j) for rank, j in enumerate(prescreened, 1)
+              if (j.get("id") or j.get("job_id")) not in scored_ids]
+        lines += ["", f"## Prescreen-filtered — not individually scored ({len(pf)})"]
+        cutoff = (f" Only the top {full_score_top_n} by prescreen rank were full-scored in-session "
+                  "(latency)." if full_score_top_n is not None else "")
+        lines += ["", f"_These cleared the deterministic prescreen (title-family · seniority · function · "
+                  f"location) but ranked below the cutoff.{cutoff} Shown with rank + reason — **not** an LLM "
+                  "verdict; they were not individually scored._"]
+        if pf:
+            lines += ["", "| Rank | Title | Company | Location | Reason (deterministic) | Link |",
+                      "|-----:|-------|---------|----------|------------------------|------|"]
+            for rank, j in pf:
+                loc = _clean(j.get("location") or "—")
+                reason = (f"passed prescreen; rank #{rank}"
+                          + (f" > top-{full_score_top_n} cutoff — not scored" if full_score_top_n
+                             else " — not scored"))
+                lines.append(f"| {rank} | {_clean(j.get('title'))} | {_clean(j.get('company'))} "
+                             f"| {loc} | {reason} | {_link(j)} |")
+        # RISK GUARD: a true APPLY could sit below the cutoff. If the weakest full-scored
+        # job still cleared the STRETCH line, suggest raising the cutoff (never hide roles).
+        fits = [float(v.get("fit_score", 0)) for v in scored
+                if isinstance(v.get("fit_score"), (int, float)) and not v.get("unverifiable")]
+        if pf and full_score_top_n is not None and fits and min(fits) >= 3.0:
+            lines += ["", f"> ⚠️ **Risk note:** the lowest of the {len(fits)} full-scored jobs is "
+                      f"{min(fits):.1f} (still ≥ the STRETCH line). A strong match may sit below rank "
+                      f"{full_score_top_n} in the list above — consider raising `scoring.full_score_top_n` "
+                      "in config/run.yml and re-running. Nothing is hidden; the roles are listed above."]
+
+    # ── Wall-clock footer (elapsed since prescreen stamped the run start). ──
+    elapsed_secs = None
+    if started_at:
+        try:
+            from datetime import datetime, timezone
+            elapsed_secs = int((datetime.now(timezone.utc)
+                                - datetime.fromisoformat(started_at)).total_seconds())
+            lines += ["", "---", f"⏱ Full-scored {n_scored} job(s) in {elapsed_secs // 60}m "
+                      f"{elapsed_secs % 60}s · couldn't-verify {len(couldnt)} · "
+                      f"prescreen-filtered {len(pf)} (not individually scored)."]
+        except (ValueError, TypeError):
+            elapsed_secs = None
+
     with open(os.path.join(out_dir, "top.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
-    print(f"\n  distribution: {n_apply} APPLY · {n_stretch} STRETCH · {n_no} DON'T APPLY")
+    print(f"\n  distribution: {n_apply} APPLY · {n_stretch} STRETCH · {n_no} DON'T APPLY "
+          f"· couldn't-verify {len(couldnt)} · prescreen-filtered {len(pf)}")
     if total_cost:
         print(f"  estimated LLM cost this run: ${total_cost:.2f}")
+    if elapsed_secs is not None:
+        print(f"  ⏱ wall-clock since prescreen: {elapsed_secs // 60}m {elapsed_secs % 60}s")
     print(f"  wrote {out_dir}/scored.jsonl and {out_dir}/top.md")

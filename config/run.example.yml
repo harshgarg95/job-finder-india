@@ -21,6 +21,11 @@ scoring:
   # Self-consistency: each job is scored this many times and the MOST CONSERVATIVE
   # (lowest) result is kept. Honest scoring errs toward "skip". 1 = single pass.
   samples: 3
+  # LATENCY: full-score in-session only the top-N prescreened jobs (by prescreen
+  # rank). The rest are listed under "Prescreen-filtered (not individually scored)"
+  # with their deterministic reason — never silently hidden. Raise this if the
+  # weakest full-scored job still clears the STRETCH line (top.md logs a hint).
+  full_score_top_n: 15
   # How many ranked results to surface in the run output (the rest are still
   # written to the tracker, ranked, labelled honestly — never padded).
   top_n: 10

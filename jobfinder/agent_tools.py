@@ -102,6 +102,11 @@ def cmd_discover(argv: list[str]) -> int:
 
 def cmd_prescreen(argv: list[str]) -> int:
     profile, run_cfg, _, _ = _load()
+    # Stamp the run start so top.md can report wall-clock time (prescreen is the
+    # first step of an evaluate run; scoring the top-N follows).
+    from . import state
+    from datetime import datetime, timezone
+    state.write("run_timing", {"started_at": datetime.now(timezone.utc).isoformat()})
     cpath = os.path.join(RESULTS, "candidates.jsonl")
     if not os.path.exists(cpath):
         print(json.dumps({"error": "candidates.jsonl missing — run `discover` first"}))
@@ -119,14 +124,22 @@ def cmd_prescreen(argv: list[str]) -> int:
     # Compact list the agent can iterate over without re-reading the big file.
     jobs = [{"job_id": j.id, "title": j.title, "company": j.company, "location": j.location}
             for j in kept]
+    fs_n = int((run_cfg.get("scoring", {}) or {}).get("full_score_top_n", 15))
     print(json.dumps({
         "input": rep["input"], "kept": rep["kept"], "cap": rep["cap"],
         "truncated_from": rep["truncated_from"], "by_reason": rep["by_reason"],
         "preferences_applied": bool(prefs),
         "dropped_seen": len(rep.get("dropped_seen", [])),
         "demoted": rep.get("demoted", []),
-        "prescreened_path": ppath, "jobs": jobs,
-        "RULE": f"Score ONLY these {len(jobs)} jobs in-session. Never discover or score beyond this set.",
+        "full_score_top_n": fs_n,
+        "prescreened_path": ppath,
+        "jobs": jobs,                       # full ranked set (rank = list order, best first)
+        "score_these": jobs[:fs_n],         # FIX B — full-score ONLY these top-N by prescreen rank
+        "RULE": (f"Full-score in-session ONLY the top {min(fs_n, len(jobs))} jobs in `score_these` "
+                 f"(highest prescreen rank). The other {max(0, len(jobs) - fs_n)} are auto-listed by the "
+                 "tracker under 'Prescreen-filtered (not individually scored)' — do NOT score them. For "
+                 "each job you DO score: run `enrich` first; if its verifiability.status != 'ok', record an "
+                 "unverifiable entry instead of a verdict. Never score beyond the prescreened set."),
     }, ensure_ascii=False, indent=2))
     return 0
 
@@ -185,10 +198,16 @@ def cmd_enrich(argv: list[str]) -> int:
         print(json.dumps({"error": f"job_id {a.job_id} not in prescreened.jsonl"}))
         return 1
     job_fetcher.enrich(job)                              # deep-fetch full JD (no-op if already full)
+    from . import verify
+    vstatus, vreason = verify.classify(job.url, job.description)   # can we actually score this?
     print(json.dumps({
         "job_id": job.id, "title": job.title, "company": job.company,
         "url": job.url, "location": job.location, "source": job.source,
+        "verifiability": {"status": vstatus, "reason": vreason},
         "scoring_view": job.scoring_view(),             # the exact JD block to score against
+        "RULE": ("Score this job ONLY if verifiability.status == 'ok'. If 'no_jd' or 'non_job_link', "
+                 "DO NOT score — write an unverifiable record and `tracker --add` it (see "
+                 "modes/evaluate.md). NEVER fabricate a verdict for an unverifiable job."),
     }, ensure_ascii=False, indent=2))
     return 0
 
@@ -216,8 +235,12 @@ def cmd_tracker(argv: list[str]) -> int:
     from . import score
     _, run_cfg, _, _ = _load()
     verdict = json.load(sys.stdin if a.add == "-" else open(a.add, encoding="utf-8"))
-    if not isinstance(verdict.get("fit_score"), (int, float)) or not verdict.get("job_id"):
-        print(json.dumps({"error": "verdict needs numeric fit_score and job_id"}))
+    if not verdict.get("job_id"):
+        print(json.dumps({"error": "record needs a job_id"}))
+        return 1
+    if not verdict.get("unverifiable") and not isinstance(verdict.get("fit_score"), (int, float)):
+        print(json.dumps({"error": "verdict needs a numeric fit_score (or set unverifiable:true + reason "
+                                   "for a Couldn't-verify entry)"}))
         return 1
     # Backfill the origin channel + link/location from the discovery record so
     # top.md/tracker.md label each job with its source (the verdict schema in
@@ -240,10 +263,20 @@ def cmd_tracker(argv: list[str]) -> int:
         rep = json.load(open(rep_path, encoding="utf-8"))
         funnel = {"raw": "?", "candidates": rep.get("input"), "prescreened": rep.get("kept"),
                   "truncated_from": rep.get("truncated_from")}
+    # Full ranked prescreened set + cutoff → top.md renders "Prescreen-filtered
+    # (not individually scored)"; run_timing → the wall-clock footer.
+    pp = os.path.join(RESULTS, "prescreened.jsonl")
+    prescreened = [json.loads(l) for l in open(pp, encoding="utf-8") if l.strip()] \
+        if os.path.exists(pp) else []
+    fs_n = int((run_cfg.get("scoring", {}) or {}).get("full_score_top_n", 15))
+    from . import state
+    started_at = state.read("run_timing").get("started_at")
     score._update_tracker(rows)
     score._write_outputs(rows, [], RESULTS, int((run_cfg.get("scoring", {}) or {}).get("top_n", 10)),
-                         funnel=funnel)
-    print(json.dumps({"tracked": len(rows), "added": verdict["job_id"],
+                         funnel=funnel, prescreened=prescreened, full_score_top_n=fs_n,
+                         started_at=started_at)
+    print(json.dumps({"tracked": len([r for r in rows if not r.get("unverifiable")]),
+                      "added": verdict["job_id"], "unverifiable": bool(verdict.get("unverifiable")),
                       "verdict": verdict.get("verdict"), "fit_score": verdict.get("fit_score")},
                      ensure_ascii=False))
     return 0

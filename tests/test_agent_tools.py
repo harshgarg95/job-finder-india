@@ -48,7 +48,8 @@ def test_prescreen_tool_caps_and_emits_rule():
     assert rc == 0
     assert data["kept"] <= data["cap"] and data["kept"] <= 40        # the hard cap holds
     assert data["input"] == 50 and data["truncated_from"] == 50
-    assert "Score ONLY" in data["RULE"]
+    assert "ONLY" in data["RULE"] and "score_these" in data          # FIX B: full-score cutoff
+    assert data["full_score_top_n"] == 15 and len(data["score_these"]) <= 15
     assert os.path.exists(os.path.join(d, "prescreened.jsonl"))
 
 
@@ -79,9 +80,28 @@ def test_tracker_tool_upserts_by_job_id():
 
 def test_tracker_tool_rejects_bad_verdict():
     d = _isolate()
+    # no id at all → rejected
     p = os.path.join(d, "bad.json"); json.dump({"title": "no id, no score"}, open(p, "w"))
     rc, out = _run(AT.cmd_tracker, ["--add", p])
-    assert rc == 1 and "fit_score" in json.loads(out)["error"]
+    assert rc == 1 and "job_id" in json.loads(out)["error"]
+    # has id but no score and not unverifiable → rejected (needs fit_score)
+    p2 = os.path.join(d, "bad2.json"); json.dump({"job_id": "z", "title": "x"}, open(p2, "w"))
+    rc2, out2 = _run(AT.cmd_tracker, ["--add", p2])
+    assert rc2 == 1 and "fit_score" in json.loads(out2)["error"]
+
+
+def test_tracker_tool_accepts_unverifiable_record():
+    d = _isolate()
+    rec = {"job_id": "u1", "title": "AI PM", "company": "Acme", "url": "https://acme.com/careers",
+           "unverifiable": True, "reason": "careers landing page — no specific posting"}
+    p = os.path.join(d, "u.json"); json.dump(rec, open(p, "w"))
+    rc, out = _run(AT.cmd_tracker, ["--add", p])
+    assert rc == 0
+    # the JSON response is the last stdout line (write_outputs prints progress first)
+    resp = json.loads(out.strip().splitlines()[-1])
+    assert resp["unverifiable"] is True
+    top = open(os.path.join(d, "top.md"), encoding="utf-8").read()
+    assert "Couldn't verify" in top and "AI PM" in top
 
 
 def test_live_tool_maps_status_to_liveness():

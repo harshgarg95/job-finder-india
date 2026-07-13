@@ -15,25 +15,37 @@ host model) in this session. No headless model call.
    channel). Adzuna is the co-primary India-native channel; JSearch fills in only when
    Adzuna is thin (a `skipped: adzuna sufficient` is the quota-saving gap-fill, not an
    error); Apify deep-mode is off by default; the ATS floor always runs.
-4. **Prescreen (the cap).** `python -m jobfinder prescreen --json`. This returns the
-   bounded job list (≤ `run.yml: max_llm_jobs`). **Score ONLY these. Never more.**
-5. **Score each, in-session, in batches of ~8–10:**
-   - `python -m jobfinder enrich <job_id>` → use the returned `scoring_view` (the full JD).
-   - Apply `prompts/_rubric.md` against `resume.md` + `config/profile.yml`. Cite the
-     exact résumé line ↔ exact JD requirement for every dimension. Keep legitimacy
-     separate. Default low; re-score borderline (≈3.5–4.2) once, keep the lower.
-   - Emit ONE JSON verdict (schema in `score-job.md`, include `job_id`) and persist it.
-     **Write the JSON to a temp file, then add the file** — this is robust across every
-     CLI; a raw `printf '…' | tracker --add -` pipe breaks on apostrophes (e.g. the one
-     in `DON'T APPLY`):
-     ```bash
-     # write the verdict with your file tool to data/results/_verdict.json, then:
-     python -m jobfinder tracker --add data/results/_verdict.json
-     ```
-     (`tracker --add -` still reads stdin if your JSON has no shell-hostile characters.)
-   - Persist each verdict as you go (crash-safe; the tracker upserts by `job_id`).
-6. **Present.** Show `data/results/top.md` — it leads with **APPLY / STRETCH** (full
-   detail + citations) and collapses DON'T-APPLY into "Filtered out — and why".
+4. **Prescreen (the cap + the full-score cutoff).** `python -m jobfinder prescreen --json`.
+   It returns the bounded, RANKED list (≤ `run.yml: max_llm_jobs`) plus **`score_these`** —
+   the top `full_score_top_n` (default 15) by prescreen rank. **Full-score ONLY the jobs in
+   `score_these`.** The rest are auto-listed by the tracker under "Prescreen-filtered (not
+   individually scored)" with their deterministic reason — do NOT score them, and do NOT
+   invent verdicts for them. (This is the latency win: 15 scored, not 40.)
+5. **Score each job in `score_these`, in-session, in batches of ~8–10:**
+   - `python -m jobfinder enrich <job_id>` → **read `verifiability.status` first.**
+     - **If `status != "ok"`** (`no_jd` = empty/too-thin JD, or `non_job_link` = a bare
+       domain / careers-list page): the tool couldn't actually read the posting. **DO NOT
+       score it and do NOT fabricate a verdict.** Write an unverifiable record and add it —
+       it lands in "⚠️ Couldn't verify", never in APPLY/STRETCH:
+       ```bash
+       # data/results/_verdict.json = {"job_id":"<id>","title":"…","company":"…","url":"…",
+       #                               "unverifiable":true,"reason":"<verifiability.reason>"}
+       python -m jobfinder tracker --add data/results/_verdict.json
+       ```
+     - **If `status == "ok"`**: use the returned `scoring_view` (the full JD). Apply
+       `prompts/_rubric.md` against `resume.md` + `config/profile.yml`. Cite the exact
+       résumé line ↔ exact JD requirement for every dimension. Keep legitimacy separate.
+       Default low; re-score borderline (≈3.5–4.2) once, keep the lower. Emit ONE JSON
+       verdict (schema in `score-job.md`, include `job_id`), write it to a temp file, then
+       `python -m jobfinder tracker --add data/results/_verdict.json`. (File-based add is
+       robust across CLIs; a raw `printf … | tracker --add -` pipe breaks on the apostrophe
+       in `DON'T APPLY`.)
+   - Persist each record as you go (crash-safe; the tracker upserts by `job_id`).
+6. **Present.** Show `data/results/top.md`. It now has four parts: **✅ APPLY / STRETCH**
+   (full detail + citations) · **⚠️ Couldn't verify — check manually** (unreadable / non-job
+   links, with reason) · **Filtered out — and why** (DON'T APPLY) · **Prescreen-filtered —
+   not individually scored** (rank + reason). The footer prints the wall-clock time. If a
+   "raise `full_score_top_n`" risk note appears in top.md, relay it to the user.
 7. **Offer next actions** (numbered, per the `_shared.md` convention):
    > What next? Reply with a number:
    >   **1.** Open the full report (`data/results/top.md`)
