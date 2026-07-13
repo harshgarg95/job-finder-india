@@ -160,6 +160,14 @@ def main(argv=None) -> int:
 
     raw, reports = discover(query, cfg)
     total = print_report(reports)
+    # Free-tier request quota left this month for the keyed India-native channels
+    # (read-only from the persisted counter — no network call).
+    from .discovery import quota as _quota
+    _disc = (run_cfg.get("discovery", {}) or {})
+    _qbits = [f"{ch} {_quota.remaining(ch, int((_disc.get(ch, {}) or {}).get('monthly_cap', dc)))}"
+              f"/{int((_disc.get(ch, {}) or {}).get('monthly_cap', dc))}"
+              for ch, dc in (("adzuna", 250), ("jsearch", 200))]
+    print(f"  └ free-tier quota left this month: {' · '.join(_qbits)}")
     if (cfg.get("apify_resolved") or {}).get("state") != "active":
         print(f"ℹ Apify {cfg['apify_resolved']['state']} — optional India-board coverage "
               "(Naukri/LinkedIn/Indeed) is off; running on the free ATS scan only. "

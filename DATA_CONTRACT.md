@@ -20,16 +20,16 @@ text itself to a discovery channel **you** explicitly enabled.
 |---|---|
 | `resume.md` (canonical) / `resume.txt` / `.docx` / `.pdf` (any path you pass) | Your resume. Onboarding writes the canonical `resume.md` from what you paste/upload. Read-only to this app afterward — never edited, never uploaded to us. |
 | `config/profile.yml` | Your identity, target roles/archetypes, comp floor (CTC/LPA), location, notice period. The `[GATE]` truth the scorer and prescreen key off. |
-| `config/sources.yml` | Which discovery channels you turned on (ATS / Google Jobs / Apify) and their settings. |
+| `config/sources.yml` | Which discovery channels you turned on (ATS floor / Adzuna / JSearch / Google Jobs / Apify deep-mode) and their settings. |
 | `config/run.yml` | Your run knobs — the `prescreen.max_llm_jobs` volume cap, scoring samples, top-N. |
 | `config/_profile.md` | Your narrative profile (archetypes, superpower, deal-breakers) from onboarding Step 5. |
 | `config/preferences.yml` | Revealed-preference layer, **derived** from your feedback (rejected/liked patterns). Machine-maintained; rebuild/clear anytime. Never edits the rubric. |
 | `data/results/*` | Your scored job results and ranked top-N. |
 | `data/tracker.md` | Your single-source-of-truth tracker — every job ever scored, with score, verdict, and citation summary. |
 | `data/feedback.md` / `data/feedback.jsonl` | Your scoring corrections ("wouldn't apply", "wrong level/location/domain"). The memory the feedback loop learns from + replays into scoring. Written by the local dashboard or `jobfinder feedback`. |
-| `data/.state/*` | Runtime state the app manages for you (e.g. Apify auto-pause status). Not personal data, but yours and machine-local. |
+| `data/.state/*` | Runtime state the app manages for you (Apify auto-pause status; `quota_<channel>.json` = this month's free-tier request count for Adzuna/JSearch). Not personal data, but yours and machine-local. |
 | `data/seen.jsonl` | Jobs already shown to you (so you are not shown the same job twice). |
-| `.env` | Your optional discovery keys (SerpAPI / Apify). Secrets. Gitignored — **never read, printed, or transmitted by the app except as the `Authorization` header to the channel you enabled.** |
+| `.env` | Your optional discovery keys (Adzuna app id/key · JSearch · SerpAPI · Apify). Secrets. Gitignored — **never read, printed, or transmitted by the app except as the auth header/params to the channel you enabled.** |
 
 ## System Layer — safe to replace with a newer version on update
 
@@ -56,9 +56,11 @@ no personal data.
 3. **No User-Layer data leaves the machine except through a channel you
    explicitly turned on**, and even then only the minimum needed:
    - Scoring: your resume + a job's text go to the AI CLI *you* selected.
-   - Discovery (opt-in): a search query / job URL goes to the channel *you*
-     enabled (Google Jobs via your SerpAPI key, or a board via your Apify token).
-   - The default discovery channel (public ATS scan) sends only a company slug
+   - Discovery (opt-in): only a search query (a role title + "India") goes to the
+     channel *you* enabled — Adzuna (your app id/key), JSearch (your key), Google
+     Jobs (your SerpAPI key), or a board via your Apify token. No résumé, no
+     personal data — just the query.
+   - The always-on discovery floor (public ATS scan) sends only a company slug
      to a public jobs API and needs no key and no personal data at all.
 
 If a future feature would cross this line, it must be off by default, named

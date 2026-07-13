@@ -2,31 +2,50 @@
 # job-finder discovery sources — copy to config/sources.yml and edit.
 # (User Layer: never auto-updated by a system update. See DATA_CONTRACT.md.)
 #
-# Which discovery channels run, and how. The free public-ATS scan is ON by
-# default and needs no key. The other two are opt-in and need a key in .env
-# (which is gitignored — your token never enters this file or the repo).
+# Which discovery channels run, and how. Priority (all feed one funnel):
+#   ATS floor → Adzuna (co-primary) → JSearch (gap-fill) → google_jobs (alt) → Apify (deep).
+# The free public-ATS scan is ON and needs no key. Adzuna + JSearch are free-tier
+# keyed channels (keys in .env, which is gitignored — tokens never enter this file).
+# A keyed channel with no key present simply self-skips. Request budgets + monthly
+# caps for Adzuna/JSearch live in config/run.yml → discovery.
 # ─────────────────────────────────────────────────────────────────────────
 
-# Channel A — free, zero-key, default. Reads public Greenhouse/Lever/Ashby/
-# Workable feeds for the curated India tenant list (config/ats_tenants.india.yml).
+# Channel A0 — free, zero-key, always-on floor. Reads public Greenhouse/Lever/
+# Ashby/Workable/Workday/SmartRecruiters feeds for the curated India tenant list.
 ats:
   enabled: true
 
-# Channel B — optional. Google Jobs index via your own SerpAPI/Serper key.
+# Channel A1 — co-primary India-native. Adzuna official API (country=in), free
+# tier. Register a free app at developer.adzuna.com → ADZUNA_APP_ID + ADZUNA_APP_KEY
+# in .env. Cleaner than scraping: official, documented, ToS-clean.
+adzuna:
+  enabled: true
+
+# Channel A2 — SUPPLEMENT, gap-fill only. JSearch (OpenWeb Ninja) indexes Google-
+# for-Jobs (LinkedIn/Naukri/Indeed), so it overlaps Adzuna — it is spent ONLY when
+# Adzuna comes back thin (run.yml → discovery.jsearch.trigger_below), because its
+# free tier is scarcer. Needs JSEARCH_API_KEY in .env.
+jsearch:
+  enabled: true
+  host: rapidapi            # "rapidapi" (X-RapidAPI-Key header) or "openwebninja" (direct portal)
+
+# Channel B — optional. Google Jobs index via your own SerpAPI/Serper key. Overlaps
+# JSearch (same Google-for-Jobs data), so it's off by default.
 google_jobs:
   enabled: false            # set SERPAPI_KEY or SERPER_API_KEY in .env, then true
 
-# Channel C — optional, BYO-token. Reaches India-native boards (Naukri) +
-# LinkedIn/Indeed via Apify community actors. Runs bill to YOUR Apify account.
+# Channel C — DEMOTED to opt-in "deep mode" (OFF by default). Reaches India-native
+# boards via Apify community actors for the FULL JD; runs bill to YOUR Apify account.
+# The free Adzuna + JSearch + ATS channels now cover the India-native gap Apify used
+# to fill, so you only need this for the deep scrape.
 #
-# AUTO-PAUSE: if a run hits an out-of-credits / quota / HTTP-402 error or
-# repeated timeouts, job-finder flips Apify to paused, logs it, notifies you,
-# and continues with the free ATS scan — it never hard-fails the run. At the
-# next run start it does one cheap, read-only probe and auto-resumes if your
-# credits are back. (Pause state lives in data/.state/apify.json, not here, so
-# this file stays yours to edit.)
+# AUTO-PAUSE (when on): an out-of-credits / quota / HTTP-402 error or repeated
+# timeouts flips Apify to paused, logs it, and continues on the free channels — it
+# never hard-fails. The next run's cheap read-only probe auto-resumes it when credits
+# return. (Pause state lives in data/.state/apify.json, not here.)
 apify:
-  enabled: false            # set APIFY_TOKEN in .env, then true (or onboarding does it)
+  enabled: false            # opt-in: set APIFY_TOKEN in .env + enabled: true
+  mode: deep
   platforms: ["naukri", "linkedin", "indeed"]
   limit: 40                 # max items per platform per run
   # actors:                 # optional — override the default actor per platform

@@ -56,6 +56,20 @@ def _load():
     return profile, run_cfg, sources, cfg
 
 
+def _quota_summary(run_cfg: dict) -> dict:
+    """Remaining monthly free-tier quota per metered channel (no network call —
+    reads the persisted counter). Shown in the run summary so the user always
+    knows how much of each free tier is left this month."""
+    from .discovery import quota
+    disc = (run_cfg.get("discovery", {}) or {})
+    out = {}
+    for ch, default_cap in (("adzuna", 250), ("jsearch", 200)):
+        cap = int((disc.get(ch, {}) or {}).get("monthly_cap", default_cap))
+        used = quota.used_this_month(ch)
+        out[ch] = {"used_this_month": used, "remaining": max(0, cap - used), "monthly_cap": cap}
+    return out
+
+
 def cmd_discover(argv: list[str]) -> int:
     profile, run_cfg, sources, cfg = _load()
     cfg["apify_resolved"] = apify.resolve(cfg)          # start-of-run, read-only
@@ -68,12 +82,19 @@ def cmd_discover(argv: list[str]) -> int:
     with open(path, "w", encoding="utf-8") as f:
         for j in cand:
             f.write(json.dumps(j.to_dict(), ensure_ascii=False) + "\n")
+    # Per-channel source counts among the surviving candidates (label each channel's
+    # contribution, so the user sees which source produced what).
+    by_source: dict[str, int] = {}
+    for j in cand:
+        by_source[j.source] = by_source.get(j.source, 0) + 1
     print(json.dumps({
         "raw": sum(r.count for r in reports if r.enabled),
         "candidates": len(cand),
+        "candidates_by_source": by_source,
         "channels": [{"id": r.id, "enabled": r.enabled, "count": r.count,
                       "skipped": r.skipped_reason} for r in reports],
         "apify": cfg["apify_resolved"]["state"],
+        "quota_remaining": _quota_summary(run_cfg),
         "candidates_path": path,
     }, ensure_ascii=False, indent=2))
     return 0
@@ -172,6 +193,22 @@ def cmd_enrich(argv: list[str]) -> int:
     return 0
 
 
+def _find_job(job_id: str) -> dict | None:
+    """Look up a scored job's discovery record by job_id, so the tracker can
+    label it with the origin channel (`source`) + link the verdict schema omits."""
+    for fn in ("prescreened.jsonl", "candidates.jsonl"):
+        p = os.path.join(RESULTS, fn)
+        if not os.path.exists(p):
+            continue
+        for ln in open(p, encoding="utf-8"):
+            if not ln.strip():
+                continue
+            d = json.loads(ln)
+            if d.get("id") == job_id:
+                return d
+    return None
+
+
 def cmd_tracker(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="jobfinder tracker")
     ap.add_argument("--add", required=True, help="verdict JSON file, or '-' for stdin")
@@ -182,6 +219,14 @@ def cmd_tracker(argv: list[str]) -> int:
     if not isinstance(verdict.get("fit_score"), (int, float)) or not verdict.get("job_id"):
         print(json.dumps({"error": "verdict needs numeric fit_score and job_id"}))
         return 1
+    # Backfill the origin channel + link/location from the discovery record so
+    # top.md/tracker.md label each job with its source (the verdict schema in
+    # prompts/score-job.md carries url/title/company but not source/location).
+    jrec = _find_job(verdict["job_id"])
+    if jrec:
+        for k in ("source", "link_source", "location", "url", "title", "company"):
+            if not verdict.get(k) and jrec.get(k):
+                verdict[k] = jrec.get(k)
     spath = os.path.join(RESULTS, "scored.jsonl")
     rows = [json.loads(l) for l in open(spath, encoding="utf-8") if l.strip()] if os.path.exists(spath) else []
     rows = [r for r in rows if r.get("job_id") != verdict["job_id"]] + [verdict]   # upsert by job_id

@@ -10,8 +10,11 @@ host model) in this session. No headless model call.
    then `resume.md` and `config/profile.yml` (+ `config/_profile.md`). Also run
    `python -m jobfinder preferences --context` and hold that block as a **tie-breaker
    for BORDERLINE (≈3.5–4.2) calls only** — it never overrides the rubric or a hard gate.
-3. **Discover.** `python -m jobfinder discover --json`. Report the funnel + channel
-   states (Apify auto-pauses on no credits — that's expected; ATS-only is fine).
+3. **Discover.** `python -m jobfinder discover --json`. Report the funnel, per-channel
+   states, `candidates_by_source`, and `quota_remaining` (monthly free-tier left per
+   channel). Adzuna is the co-primary India-native channel; JSearch fills in only when
+   Adzuna is thin (a `skipped: adzuna sufficient` is the quota-saving gap-fill, not an
+   error); Apify deep-mode is off by default; the ATS floor always runs.
 4. **Prescreen (the cap).** `python -m jobfinder prescreen --json`. This returns the
    bounded job list (≤ `run.yml: max_llm_jobs`). **Score ONLY these. Never more.**
 5. **Score each, in-session, in batches of ~8–10:**
@@ -34,7 +37,7 @@ host model) in this session. No headless model call.
 7. **Offer next actions** (numbered, per the `_shared.md` convention):
    > What next? Reply with a number:
    >   **1.** Open the full report (`data/results/top.md`)
-   >   **2.** Re-run with Apify enabled for more India boards (needs `APIFY_TOKEN`)
+   >   **2.** Widen sources — add Adzuna/JSearch keys (`.env`), or enable Apify deep-mode
    >   **3.** Adjust target roles / filters (`config/profile.yml`) and re-run
    >   **4.** Check whether a posting is still live (`python -m jobfinder live <job_id>`)
    >   **5.** Done `← (default)`

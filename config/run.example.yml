@@ -31,6 +31,22 @@ discovery:
   # Max results requested per discovery channel before dedup/prescreen.
   limit_per_channel: 60
 
+  # Free-tier REQUEST BUDGETS for the keyed India-native channels (Adzuna, JSearch).
+  # Two layers of safety, mirroring Apify's spend-safety but for request counts:
+  #   • max_requests_per_run — at most this many API calls per run.
+  #   • monthly_cap          — a persisted counter (data/.state/quota_<ch>.json);
+  #     when this month's count reaches the cap, OR the API returns a 429/quota
+  #     error, the channel pauses and discovery degrades to ATS + others. It never
+  #     hard-fails. A new calendar month resets the counter automatically.
+  # Defaults (shown) are the verified free-tier limits; used if this block is absent.
+  adzuna:
+    max_requests_per_run: 3         # ~3 title-queries × 1 page (50 results each)
+    monthly_cap: 250                # conservative free-tier request budget
+  jsearch:
+    max_requests_per_run: 3         # ~3 title-queries × 1 page
+    monthly_cap: 200                # VERIFIED free tier (RapidAPI X-RateLimit-Requests-Limit)
+    trigger_below: 40               # gap-fill: only spend JSearch when Adzuna returns < this
+
 # Apify SPEND-SAFETY. The channel already auto-pauses when your credits run out;
 # these additionally bound the COST of any run that DOES scrape, so a single run
 # can never drain your balance. Safe defaults (shown) are used if this block is

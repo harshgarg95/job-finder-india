@@ -61,19 +61,32 @@ resume + profile ──▶ DISCOVERY ──▶ dedup + pre-filter ──▶ HONE
 ## Discovery — layered and legitimate
 
 Discovery is plumbing, kept boring and legitimate. **No stealth, no bot-evasion,
-no anonymous proxy scraping** — ever. Channels, in priority order:
+no anonymous proxy scraping** — ever. Channels, in priority order (all feed one
+dedup → India/keyword filter → cap-40 prescreen funnel):
 
-1. **Public ATS scan (default, free, zero key).** Reads the public JSON APIs of
-   Greenhouse / Ashby / Lever / Workable for a curated list of India-relevant
-   companies. Clean and reliable.
-2. **Google Jobs (optional).** Indirect coverage of LinkedIn-surfaced and other
-   board listings via Google's index. Bring your own SerpAPI/Serper key.
-3. **Apify, BYO-token (optional, off by default).** Closes the India gap
-   (Naukri) the first two channels miss. You supply your own Apify token; runs
-   bill to your account; you accept the board's ToS directly. If your credits
-   run out (or a quota/timeout hits), the channel **auto-pauses**, says so, and
-   the run continues on the free ATS scan — it never hard-fails. The next run
-   does one cheap read-only probe and auto-resumes when your credits return.
+1. **Public ATS scan (always-on floor, free, zero key).** Reads the public JSON
+   APIs of Greenhouse / Ashby / Lever / Workable / Workday / SmartRecruiters for a
+   curated list of India-relevant companies. Clean, reliable, never gated.
+2. **Adzuna (co-primary India-native, free tier).** The official Adzuna API
+   (`country=in`) — documented, ToS-clean, no scraping. Free app id/key from
+   developer.adzuna.com. This is the default India-native channel.
+3. **JSearch (supplement, gap-fill).** OpenWeb Ninja's Google-for-Jobs index
+   (LinkedIn / Naukri / Indeed surfaced). It overlaps Adzuna, so it is spent
+   **only when Adzuna comes back thin** — conserving its scarcer free tier
+   (~200 req/month). RapidAPI or the OpenWeb Ninja direct portal.
+4. **Google Jobs (optional, off).** Same Google-for-Jobs data as JSearch, via your
+   own SerpAPI/Serper key. Off by default (redundant with JSearch).
+5. **Apify deep mode (opt-in, off by default).** The FULL-JD Naukri/LinkedIn/Indeed
+   scrape, for when you want depth over breadth. BYO Apify token; runs bill to your
+   account; you accept the board's ToS directly. If credits run out (or a
+   quota/timeout hits) it **auto-pauses**, says so, and the run continues on the
+   free channels — it never hard-fails; the next run's cheap probe auto-resumes it.
+
+**Free-tier safety.** Adzuna and JSearch each have a per-run request cap and a
+persisted monthly counter (`config/run.yml` → `discovery`). When a monthly free
+tier is exhausted — or an API returns a 429 — that channel pauses and discovery
+degrades to the ATS floor + others. A new calendar month resets it. Every run
+labels each job with its source channel and prints the remaining monthly quota.
 
 If a channel returns nothing, job-finder says so plainly. It never fabricates a
 result and never silently degrades.
