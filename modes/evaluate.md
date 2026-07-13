@@ -19,10 +19,15 @@ host model) in this session. No headless model call.
    - Apply `prompts/_rubric.md` against `resume.md` + `config/profile.yml`. Cite the
      exact résumé line ↔ exact JD requirement for every dimension. Keep legitimacy
      separate. Default low; re-score borderline (≈3.5–4.2) once, keep the lower.
-   - Emit ONE JSON verdict (schema in `score-job.md`, include `job_id`) and persist it:
+   - Emit ONE JSON verdict (schema in `score-job.md`, include `job_id`) and persist it.
+     **Write the JSON to a temp file, then add the file** — this is robust across every
+     CLI; a raw `printf '…' | tracker --add -` pipe breaks on apostrophes (e.g. the one
+     in `DON'T APPLY`):
      ```bash
-     printf '%s' '<verdict json>' | python -m jobfinder tracker --add -
+     # write the verdict with your file tool to data/results/_verdict.json, then:
+     python -m jobfinder tracker --add data/results/_verdict.json
      ```
+     (`tracker --add -` still reads stdin if your JSON has no shell-hostile characters.)
    - Persist each verdict as you go (crash-safe; the tracker upserts by `job_id`).
 6. **Present.** Show `data/results/top.md` — it leads with **APPLY / STRETCH** (full
    detail + citations) and collapses DON'T-APPLY into "Filtered out — and why".

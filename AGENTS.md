@@ -16,9 +16,12 @@ Antigravity. No CLI-specific auth code — login is each CLI's own.
 - A separate `python -m jobfinder --resume … --cli …` headless path exists for
   CI/batch only — not for interactive use.
 
-> **Status — multi-LLM verification PENDING.** Validated in-session on Claude only;
-> not yet run on a non-Claude CLI. If a step behaves differently than a mode
-> describes, stop and report rather than guessing.
+> **Status — multi-LLM: VERIFIED in-session on Claude and GitHub Copilot** (a non-Claude
+> model: read AGENTS.md → ran doctor/discover/prescreen → scored in-session with
+> citation-backed JSON, seniority/function gates held — no headless call, no token).
+> opencode/codex/qwen run interactively once authed; Antigravity is a desktop app.
+> Confirm on your CLI by opening it here and saying "find me jobs". If a step behaves
+> differently than a mode describes, stop and report rather than guessing.
 
 ## Before anything else — the cold-start gate
 On the first request, run:

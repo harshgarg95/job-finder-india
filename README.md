@@ -99,11 +99,13 @@ Tools: `doctor --json` (gate) · `discover --json` · `prescreen --json` (the vo
 `enrich <job_id>` · `tracker --add -` · `live <job_id>` (posting still active? — adopted
 from career-ops). Outputs: `data/results/top.md` (fit-first) + `data/tracker.md`.
 
-> **Status — multi-LLM verification PENDING.** The pack is built CLI-agnostic
-> (Bash + files) and is validated **in-session on Claude**. It has **not** yet been
-> verified on a non-Claude CLI. To verify: open Codex (or another non-Claude
-> agentic CLI) in this repo, say *"find me jobs,"* and confirm it runs
-> doctor → discover → prescreen → scores in-session with citation-backed JSON.
+> **Status — multi-LLM: verified.** The pack is CLI-agnostic (Bash + files) and has run
+> the full flow in-session on **Claude** and **GitHub Copilot** (a non-Claude model —
+> doctor → discover → prescreen → in-session scoring with citation-backed JSON, seniority/
+> function gates held). `opencode` / `codex` / `qwen` run interactively once authed;
+> Antigravity is a desktop app. Confirm on your CLI by opening it here and saying *"find
+> me jobs."* (Headless runs need each CLI's auto-approve flag — e.g. Copilot's
+> `--allow-all-tools`.)
 
 ## Standalone / CI (headless fallback)
 
