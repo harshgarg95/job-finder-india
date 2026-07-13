@@ -18,13 +18,17 @@ text itself to a discovery channel **you** explicitly enabled.
 
 | File / dir | What it is |
 |---|---|
-| `resume.txt` / `.md` / `.docx` / `.pdf` (any path you pass) | Your resume. Read-only to this app. Never edited, never uploaded to us. |
-| `config/profile.yml` | Your identity, target roles/archetypes, comp floor (CTC/LPA), location, notice period. |
+| `resume.md` (canonical) / `resume.txt` / `.docx` / `.pdf` (any path you pass) | Your resume. Onboarding writes the canonical `resume.md` from what you paste/upload. Read-only to this app afterward — never edited, never uploaded to us. |
+| `config/profile.yml` | Your identity, target roles/archetypes, comp floor (CTC/LPA), location, notice period. The `[GATE]` truth the scorer and prescreen key off. |
+| `config/sources.yml` | Which discovery channels you turned on (ATS / Google Jobs / Apify) and their settings. |
+| `config/run.yml` | Your run knobs — the `prescreen.max_llm_jobs` volume cap, scoring samples, top-N. |
+| `config/_profile.md` | Your narrative profile (archetypes, superpower, deal-breakers) from onboarding Step 5. |
 | `data/results/*` | Your scored job results and ranked top-N. |
+| `data/tracker.md` | Your single-source-of-truth tracker — every job ever scored, with score, verdict, and citation summary. |
 | `data/feedback.md` / `data/feedback.jsonl` | Your scoring corrections ("wouldn't apply", "wrong level/location/domain"). The memory the feedback loop learns from + replays into scoring. Written by the local dashboard or `jobfinder feedback`. |
-| `data/applications.md` | Your application tracker. |
+| `data/.state/*` | Runtime state the app manages for you (e.g. Apify auto-pause status). Not personal data, but yours and machine-local. |
 | `data/seen.jsonl` | Jobs already shown to you (so you are not shown the same job twice). |
-| `.env` | Your optional discovery keys (SerpAPI / Apify). Secrets. Gitignored. |
+| `.env` | Your optional discovery keys (SerpAPI / Apify). Secrets. Gitignored — **never read, printed, or transmitted by the app except as the `Authorization` header to the channel you enabled.** |
 
 ## System Layer — safe to replace with a newer version on update
 
@@ -36,6 +40,7 @@ no personal data.
 | `prompts/*.md` | The scoring rubric and prompts (the CLI-agnostic scoring core). |
 | `jobfinder/**/*.py` | Discovery + orchestration code. |
 | `config/profile.example.yml` | Template you copy to `config/profile.yml`. |
+| `config/sources.example.yml`, `config/run.example.yml`, `config/_profile.example.md` | Templates for the user files above. Onboarding seeds the real files from these. |
 | `config/ats_tenants.india.yml` | The India ATS tenant list scanned by the free channel. |
 | `dashboard/*` | The local tracker UI. |
 | `README.md`, `DATA_CONTRACT.md`, `LICENSE`, `docs/*` | Documentation. |

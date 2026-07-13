@@ -1,0 +1,32 @@
+# ─────────────────────────────────────────────────────────────────────────
+# job-finder run knobs — copy to config/run.yml and edit.
+# (User Layer: never auto-updated by a system update. See DATA_CONTRACT.md.)
+#
+# This file is the VOLUME-SAFETY contract. `prescreen.max_llm_jobs` is a HARD
+# ceiling: no run will ever send more than this many jobs to your AI CLI, no
+# matter how many the discovery channels return. An all-day / credits-gone run
+# is impossible by construction.
+# ─────────────────────────────────────────────────────────────────────────
+
+prescreen:
+  # HARD CAP — the single most important safety number. Even if the deterministic
+  # title/seniority/function gate keeps 200 jobs, only this many (the best-ranked)
+  # are ever scored by the LLM. Truncation is always logged, never silent.
+  max_llm_jobs: 40
+  # A job whose stated minimum experience exceeds (your function years + this
+  # buffer) is dropped as clearly-over-senior before any LLM call.
+  seniority_buffer_years: 3
+
+scoring:
+  # Self-consistency: each job is scored this many times and the MOST CONSERVATIVE
+  # (lowest) result is kept. Honest scoring errs toward "skip". 1 = single pass.
+  samples: 3
+  # How many ranked results to surface in the run output (the rest are still
+  # written to the tracker, ranked, labelled honestly — never padded).
+  top_n: 10
+  # Per-LLM-call timeout (seconds).
+  timeout_seconds: 300
+
+discovery:
+  # Max results requested per discovery channel before dedup/prescreen.
+  limit_per_channel: 60

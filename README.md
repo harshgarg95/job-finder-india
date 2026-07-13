@@ -70,7 +70,10 @@ no anonymous proxy scraping** — ever. Channels, in priority order:
    board listings via Google's index. Bring your own SerpAPI/Serper key.
 3. **Apify, BYO-token (optional, off by default).** Closes the India gap
    (Naukri) the first two channels miss. You supply your own Apify token; runs
-   bill to your account; you accept the board's ToS directly.
+   bill to your account; you accept the board's ToS directly. If your credits
+   run out (or a quota/timeout hits), the channel **auto-pauses**, says so, and
+   the run continues on the free ATS scan — it never hard-fails. The next run
+   does one cheap read-only probe and auto-resumes when your credits return.
 
 If a channel returns nothing, job-finder says so plainly. It never fabricates a
 result and never silently degrades.
@@ -79,19 +82,28 @@ result and never silently degrades.
 
 ```bash
 git clone https://github.com/harshgarg95/job-finder-india
-cd job-finder
+cd job-finder-india
 pip install -r requirements.txt          # discovery + resume-parsing deps only
 
-cp config/profile.example.yml config/profile.yml   # edit: your seniority, function, comp
-# (optional) cp .env.example .env                   # only for Google Jobs / Apify channels
+# 1) Setup check — which AI CLIs are installed, which config files exist
+python -m jobfinder doctor
 
-# Make sure you have ONE AI CLI installed (claude / gemini / codex / qwen / opencode / aider …)
-python -m jobfinder --resume path/to/your_resume.pdf
+# 2) First-run guided setup (writes resume.md + config; never overwrites your files)
+python -m jobfinder onboard
+
+# 3) Your honest top-N
+python -m jobfinder --resume resume.md --cli claude
 ```
 
 You get a ranked top-N with, for each job: an honest 0–5 score, an
 apply/don't-apply call, and the resume-line ↔ JD-requirement citations behind
 it.
+
+**Volume safety by design.** Before any LLM call, a deterministic prescreen
+(title / seniority / function / hard-constraints) cuts the candidate set to a
+bounded few dozen — capped by `config/run.yml` → `prescreen.max_llm_jobs`. Every
+run prints the funnel (`raw → candidates → prescreened → scored`) and, for hosted
+CLIs, the per-call cost. A run can never balloon into thousands of calls.
 
 ## The feedback loop (the part that gets smarter)
 

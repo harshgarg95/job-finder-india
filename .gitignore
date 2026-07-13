@@ -6,6 +6,9 @@
 # These are the user's own resume, profile, results, and feedback. The repo
 # ships only *.example templates; the real files stay local and untracked.
 config/profile.yml
+config/sources.yml
+config/run.yml
+config/_profile.md
 data/*
 !data/.gitkeep
 resume.txt

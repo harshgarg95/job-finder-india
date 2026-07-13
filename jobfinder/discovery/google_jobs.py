@@ -42,7 +42,14 @@ class GoogleJobsProvider:
     id = "google_jobs"
 
     def enabled(self, cfg: dict) -> bool:
-        return bool(os.environ.get("SERPAPI_KEY"))
+        src = (cfg.get("sources", {}) or {}).get("google_jobs")
+        if src is not None and not src.get("enabled"):
+            self._skip = "off in config/sources.yml (set enabled: true + SERPAPI_KEY in .env)"
+            return False
+        if not os.environ.get("SERPAPI_KEY"):
+            self._skip = "no SERPAPI_KEY in .env"
+            return False
+        return True
 
     def fetch(self, query: Query, cfg: dict) -> list[JobPosting]:
         key = os.environ.get("SERPAPI_KEY")

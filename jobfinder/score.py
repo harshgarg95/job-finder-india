@@ -4,6 +4,11 @@ This is the product path: it concatenates the rubric + the candidate's resume an
 profile + one job, hands it to whichever AI CLI the user has (headless, via
 cli_adapter), parses the JSON verdict, and ranks. No scoring key lives here.
 
+Volume safety: this function scores ONLY the already-bounded set it is handed
+(run.py runs prescreen_set first, capped at run.yml's `max_llm_jobs`). It does
+NOT re-discover or re-expand — so the number of LLM calls is bounded by
+construction (jobs × scoring.samples).
+
 Honesty plumbing: per-job failures are recorded and the run continues, but if
 *every* job fails to score, that is reported as a breakage — never silently
 turned into an empty/garbage ranking.
@@ -13,17 +18,18 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 
 import yaml
 
 from . import cli_adapter
 from .discovery import job_fetcher
-from .prescreen import prescreen
 from .resume import load_resume
 from .schema import JobPosting
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROMPTS = os.path.join(ROOT, "prompts")
+DATA = os.path.join(ROOT, "data")
 
 
 def _read(path: str) -> str:
@@ -79,16 +85,50 @@ def _fit_of(v: dict) -> float:
 
 
 def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_dir: str,
-                   cli: str | None = None, top_n: int = 10, samples: int = 3) -> int:
+                   cli: str | None = None, run_cfg: dict | None = None,
+                   funnel: dict | None = None) -> int:
     from . import feedback
     from . import skills as skills_mod
+
+    run_cfg = run_cfg or {}
+    scoring_cfg = run_cfg.get("scoring", {}) or {}
+    top_n = int(scoring_cfg.get("top_n", 10))
+    samples = int(scoring_cfg.get("samples", 3))
+    timeout = int(scoring_cfg.get("timeout_seconds", 300))
+
     resume_text = load_resume(resume_path)
     candidate_skills = skills_mod.extract(resume_text)   # normalized once (structured profile)
     if candidate_skills:
         print(f"  normalized {len(candidate_skills)} resume skills: {', '.join(candidate_skills[:12])}"
               + (" …" if len(candidate_skills) > 12 else ""))
     os.makedirs(out_dir, exist_ok=True)
-    scored, failures = [], []
+    failures = []
+    total_cost = 0.0
+
+    # Crash-safe checkpoint + resume: scored.jsonl is written per-job and re-read
+    # on a re-run, so a long scoring pass interrupted by a timeout / rate limit /
+    # Ctrl-C RESUMES instead of starting over. Only entries for jobs in the
+    # CURRENT set are kept (stale results from an older set are dropped).
+    scored_path = os.path.join(out_dir, "scored.jsonl")
+    current_ids = {j.id for j in jobs}
+    done: dict[str, dict] = {}
+    if os.path.exists(scored_path):
+        for ln in open(scored_path, encoding="utf-8"):
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                e = json.loads(ln)
+            except json.JSONDecodeError:
+                continue
+            if e.get("job_id") in current_ids and isinstance(e.get("fit_score"), (int, float)):
+                done[e["job_id"]] = e
+    with open(scored_path, "w", encoding="utf-8") as f:   # rewrite clean (drop stale)
+        for e in done.values():
+            f.write(json.dumps(e, ensure_ascii=False) + "\n")
+    if done:
+        print(f"  resume: {len(done)} job(s) in this set already scored — skipping them")
+    ckpt = open(scored_path, "a", encoding="utf-8")
 
     # Feedback loop: drop jobs the user already rejected, and replay corrections.
     fb = feedback.load()
@@ -101,43 +141,37 @@ def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_
     if lessons:
         print(f"  feedback: replaying {len(fb)} prior correction(s) into scoring")
 
-    print(f"\n── Scoring {len(jobs)} jobs via your AI CLI "
-          f"({cli or os.environ.get('JOBFINDER_CLI') or 'auto-detect'}) ──")
+    print(f"\n── Scoring {len(jobs)} prescreened jobs via your AI CLI "
+          f"({cli or os.environ.get('JOBFINDER_CLI') or 'auto-detect'}), {samples} sample(s) each ──")
     enriched = 0
-    prescreened = 0
     for i, job in enumerate(jobs, 1):
-        # Tier-0: free deterministic gate — skip the LLM (and the deep-fetch) for
-        # clear structured misfits (over-senior requirement, comp below floor).
-        ok, why = prescreen(job, profile)
-        if not ok:
-            prescreened += 1
-            scored.append({
-                "company": job.company, "title": job.title, "url": job.url,
-                "job_id": job.id, "location": job.location, "source": job.source,
-                "link_source": job.link_source, "link_verified": job.link_verified,
-                "fit_score": 1.5, "verdict": "DON'T APPLY",
-                "headline": f"DON'T APPLY (pre-screen, no LLM) — {why}",
-                "prescreened": True, "score_range": [1.5, 1.5], "score_samples": 0,
-            })
+        if job.id in done:                 # resume: already scored, skip (and skip enrich)
             continue
         # Deep-fetch the full JD if we only have a thin snippet (so the scorer
-        # sees buried gating requirements, not a summary).
+        # sees buried gating requirements, not a summary). Bounded set → bounded fetches.
         if job_fetcher.enrich(job):
             enriched += 1
         prompt = build_prompt(resume_text, profile, job, lessons, candidate_skills)
         # Self-consistency: score N times, keep the MOST CONSERVATIVE (lowest)
-        # result. Single-pass LLM scores vary; honest scoring errs low (better to
-        # skip than to waste an application on a false APPLY).
+        # result. Single-pass LLM scores vary; honest scoring errs low.
         outs, last_err = [], None
+
         def _note_failover(frm, to, why, _seen=set()):
             if (frm, to) not in _seen:
                 _seen.add((frm, to))
                 print(f"   ⚠ CLI '{frm}' unavailable ({why[:60]}) → failing over to '{to}'")
+
         for _ in range(max(1, samples)):
             try:
-                outs.append(cli_adapter.score(prompt, cli=cli, on_failover=_note_failover))
+                v = cli_adapter.score(prompt, cli=cli, timeout=timeout, on_failover=_note_failover)
+                outs.append(v)
             except Exception as e:
                 last_err = e
+        for v in outs:
+            c = v.get("_cost_usd")
+            if isinstance(c, (int, float)):
+                total_cost += c
+
         valid = [v for v in outs if isinstance(v.get("fit_score"), (int, float))]
         if not valid:
             failures.append({"title": job.title, "company": job.company,
@@ -147,6 +181,7 @@ def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_
             fits = [_fit_of(v) for v in valid]
             verdict["score_samples"] = len(outs)
             verdict["score_range"] = [min(fits), max(fits)]
+            verdict["job_cost_usd"] = round(sum((v.get("_cost_usd") or 0) for v in outs), 4)
             verdict.setdefault("company", job.company)
             verdict.setdefault("title", job.title)
             verdict["url"] = job.url
@@ -163,12 +198,14 @@ def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_
                 if st in chk:
                     chk[st].append(s)
             verdict["skills_check"] = chk
-            scored.append(verdict)
+            done[job.id] = verdict
+            ckpt.write(json.dumps(verdict, ensure_ascii=False) + "\n")
+            ckpt.flush()                   # crash-safe: each job persisted immediately
         if i % 10 == 0:
-            print(f"   scored {i}/{len(jobs)} (failures so far: {len(failures)})")
+            print(f"   scored {len(done)}/{len(jobs)} (failures: {len(failures)}, cost so far: ${total_cost:.2f})")
 
-    if prescreened:
-        print(f"   (Tier-0 pre-screen rejected {prescreened} clear misfits — no LLM call spent)")
+    ckpt.close()
+    scored = list(done.values())
     if enriched:
         print(f"   (deep-fetched the full JD for {enriched} thin-snippet listings)")
     if not scored:
@@ -178,11 +215,78 @@ def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_
         return 2
 
     scored.sort(key=lambda v: (-float(v.get("fit_score", 0)), len(v.get("caps_applied", []))))
-    _write_outputs(scored, failures, out_dir, top_n)
+    _update_tracker(scored)
+    _write_outputs(scored, failures, out_dir, top_n, total_cost=total_cost, funnel=funnel)
     return 0
 
 
-def _write_outputs(scored: list[dict], failures: list[dict], out_dir: str, top_n: int) -> None:
+def _update_tracker(scored: list[dict]) -> None:
+    """Register EVERY scored job in the markdown tracker — the single source of
+    truth. Merges across runs by job_id (latest score wins) via a jsonl store,
+    then renders data/tracker.md. User Layer (never leaves the machine)."""
+    os.makedirs(DATA, exist_ok=True)
+    store = os.path.join(DATA, "tracker.jsonl")
+    md = os.path.join(DATA, "tracker.md")
+
+    by_id: dict[str, dict] = {}
+    if os.path.exists(store):
+        for ln in open(store, encoding="utf-8"):
+            ln = ln.strip()
+            if ln:
+                try:
+                    e = json.loads(ln)
+                    by_id[e.get("job_id")] = e
+                except json.JSONDecodeError:
+                    continue
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    for v in scored:
+        jid = v.get("job_id")
+        qs = v.get("qualifications_summary") or {}
+        prev = by_id.get(jid) or {}
+        by_id[jid] = {
+            "job_id": jid,
+            "first_seen": prev.get("first_seen", today),
+            "last_scored": today,
+            "company": v.get("company", ""), "title": v.get("title", ""),
+            "location": v.get("location", ""), "url": v.get("url", ""),
+            "source": v.get("source", ""),
+            "fit_score": v.get("fit_score"), "verdict": v.get("verdict", ""),
+            "headline": v.get("headline", ""),
+            "met": qs.get("met"), "partial": qs.get("partial"), "missing": qs.get("missing"),
+            "scored_by": v.get("_scored_by", ""),
+        }
+
+    with open(store, "w", encoding="utf-8") as f:
+        for e in by_id.values():
+            f.write(json.dumps(e, ensure_ascii=False) + "\n")
+
+    rows = sorted(by_id.values(),
+                  key=lambda e: (-(e.get("fit_score") or 0), e.get("company", "")))
+    lines = [
+        "# Job tracker — every scored job (single source of truth)", "",
+        f"_{len(rows)} jobs tracked · updated {today} · User Layer — never leaves your machine._", "",
+        "| Score | Verdict | Title | Company | Location | Quals m/p/x | Last scored | Link |",
+        "|------:|---------|-------|---------|----------|:-----------:|-------------|------|",
+    ]
+    for e in rows:
+        sc = e.get("fit_score")
+        sc = f"{float(sc):.1f}" if isinstance(sc, (int, float)) else "—"
+        q = f"{e.get('met','-')}/{e.get('partial','-')}/{e.get('missing','-')}"
+        title = (e.get("title", "") or "")[:46].replace("|", "/")
+        comp = (e.get("company", "") or "")[:18].replace("|", "/")
+        loc = (e.get("location", "") or "")[:18].replace("|", "/")
+        url = e.get("url", "") or ""
+        link = f"[link]({url})" if url else ""
+        lines.append(f"| {sc} | {e.get('verdict','')} | {title} | {comp} | {loc} | {q} | "
+                     f"{e.get('last_scored','')} | {link} |")
+    with open(md, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    print(f"  tracker: {len(rows)} job(s) registered in data/tracker.md (single source of truth)")
+
+
+def _write_outputs(scored: list[dict], failures: list[dict], out_dir: str, top_n: int,
+                   total_cost: float = 0.0, funnel: dict | None = None) -> None:
     with open(os.path.join(out_dir, "scored.jsonl"), "w", encoding="utf-8") as f:
         for v in scored:
             f.write(json.dumps(v, ensure_ascii=False) + "\n")
@@ -193,9 +297,17 @@ def _write_outputs(scored: list[dict], failures: list[dict], out_dir: str, top_n
     n_apply, n_stretch, n_no = dist["APPLY"], dist["STRETCH"], dist["DON'T APPLY"]
 
     lines = ["# Honest top results", ""]
+    if funnel:
+        lines.append(f"**Funnel:** raw {funnel.get('raw','?')} → candidates {funnel.get('candidates','?')} "
+                     f"→ prescreened {funnel.get('prescreened','?')} → scored {len(scored)}")
+        if funnel.get("truncated_from"):
+            lines.append(f"> Prescreen kept {funnel['truncated_from']} jobs; capped to "
+                         f"{funnel.get('prescreened')} (run.yml `max_llm_jobs`) — not silent.")
+        lines.append("")
     fail_note = f" · {len(failures)} failed to score" if failures else ""
+    cost_note = f" · est. cost ${total_cost:.2f}" if total_cost else " · cost: n/a (local/free CLI)"
     lines.append(f"Scored {len(scored)} jobs — "
-                 f"{n_apply} APPLY · {n_stretch} STRETCH · {n_no} DON'T APPLY{fail_note}")
+                 f"{n_apply} APPLY · {n_stretch} STRETCH · {n_no} DON'T APPLY{fail_note}{cost_note}")
     lines.append("")
     lines.append("| # | Score | Verdict | Title | Company | Honest reason |")
     lines.append("|---|------:|---------|-------|---------|---------------|")
@@ -212,4 +324,6 @@ def _write_outputs(scored: list[dict], failures: list[dict], out_dir: str, top_n
         f.write("\n".join(lines) + "\n")
 
     print(f"\n  distribution: {n_apply} APPLY · {n_stretch} STRETCH · {n_no} DON'T APPLY")
+    if total_cost:
+        print(f"  estimated LLM cost this run: ${total_cost:.2f}")
     print(f"  wrote {out_dir}/scored.jsonl and {out_dir}/top.md")

@@ -125,18 +125,25 @@ def test_skills_normalize_extract_match():
 
 def test_prescreen_tier0_gate_no_io():
     from jobfinder.prescreen import prescreen
-    prof = {"seniority": {"years_total": 8}, "compensation": {"floor_ctc_lpa": 20}}
-    # over-senior requirement (15+ vs 8) -> reject
-    over = JobPosting(title="Director", company="C", source="apify:naukri", experience_min=15)
-    ok, why = prescreen(over, prof); assert not ok and "15" in why
-    # comp below floor (8 LPA < 20) -> reject
-    low = JobPosting(title="PM", company="C", source="apify:naukri", salary_max=800000, salary_currency="INR")
+    prof = {"seniority": {"years_total": 8}, "compensation": {"floor_ctc_lpa": 20},
+            "target_roles": {"primary": ["AI Delivery Manager"]}}
+    # over-senior TITLE (above manager/mid ceiling) -> reject on the title gate
+    over = JobPosting(title="Director, AI", company="C", source="s")
+    ok, why = prescreen(over, prof); assert not ok and "senior" in why.lower()
+    # in-family title, but stated experience clearly over (15 vs 8+3) -> reject (structured)
+    exp = JobPosting(title="Program Manager", company="C", source="apify:naukri", experience_min=15)
+    ok, why = prescreen(exp, prof); assert not ok and "15" in why
+    # in-family title, comp below floor (8 LPA < 20) -> reject (structured)
+    low = JobPosting(title="Program Manager", company="C", source="apify:naukri",
+                     salary_max=800000, salary_currency="INR")
     ok, why = prescreen(low, prof); assert not ok and "floor" in why.lower()
-    # borderline experience (9 vs 8, within +3 buffer) -> pass to LLM
-    bord = JobPosting(title="PM", company="C", source="apify:naukri", experience_min=9)
+    # borderline experience (9 vs 8, within +3 buffer) on an in-family title -> pass
+    bord = JobPosting(title="Program Manager", company="C", source="apify:naukri", experience_min=9)
     assert prescreen(bord, prof)[0] is True
-    # unknown fields -> pass (don't reject on missing data)
-    assert prescreen(JobPosting(title="PM", company="C", source="s"), prof)[0] is True
+    # in-family title, unknown structured fields -> pass (don't reject on missing data)
+    assert prescreen(JobPosting(title="AI Delivery Manager", company="C", source="s"), prof)[0] is True
+    # wrong-function title -> reject even with no structured fields
+    assert prescreen(JobPosting(title="Data Scientist", company="C", source="s"), prof)[0] is False
 
 
 def test_cli_failover_on_quota_error():

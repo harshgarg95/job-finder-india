@@ -183,7 +183,12 @@ class AtsProvider:
         self.tenants = tenants
 
     def enabled(self, cfg: dict) -> bool:
-        return bool(self.tenants)  # always on; it's the free default channel
+        # On by default (the free channel); config/sources.yml can turn it off.
+        src = (cfg.get("sources", {}) or {}).get("ats")
+        if src is not None and not src.get("enabled"):
+            self._skip = "off in config/sources.yml"
+            return False
+        return bool(self.tenants)
 
     def fetch(self, query: Query, cfg: dict) -> list[JobPosting]:
         results: list[JobPosting] = []

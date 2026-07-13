@@ -48,11 +48,13 @@ def discover(query: Query, cfg: dict) -> tuple[list[JobPosting], list[ChannelRep
             continue
         if not on:
             reasons = {
-                "google_jobs": "set SERPAPI_KEY in .env to enable",
-                "apify": "set APIFY_TOKEN in .env to enable (Naukri + LinkedIn + Indeed)",
+                "google_jobs": "set SERPAPI_KEY in .env + enable in config/sources.yml",
+                "apify": "set APIFY_TOKEN in .env + enable in config/sources.yml (Naukri + LinkedIn + Indeed)",
                 "ats": "no tenants configured",
             }
-            reports.append(ChannelReport(p.id, False, skipped_reason=reasons.get(p.id, "disabled")))
+            # A provider may explain its own skip (e.g. apify auto-paused) via ._skip.
+            skip = getattr(p, "_skip", None) or reasons.get(p.id, "disabled")
+            reports.append(ChannelReport(p.id, False, skipped_reason=skip))
             continue
         try:
             jobs = p.fetch(query, cfg)

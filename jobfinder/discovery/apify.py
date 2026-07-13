@@ -15,15 +15,18 @@ Token is sent only as `Authorization: Bearer` to api.apify.com — never logged.
 from __future__ import annotations
 
 import os
+import sys
 from datetime import datetime, timezone
 from urllib.parse import quote
 
 import requests
 
+from .. import state
 from ..schema import JobPosting
 from .base import Query
 
 API = "https://api.apify.com/v2/acts"
+USERS_ME = "https://api.apify.com/v2/users/me"
 TIMEOUT = 240
 DEFAULT_PLATFORMS = ["naukri", "linkedin", "indeed"]
 
@@ -170,26 +173,119 @@ PLATFORMS = {
 }
 
 
+# ── Auto-pause / auto-resume ─────────────────────────────────────────────────
+# Apify bills the USER's own account. When credits run out (or quota/repeated
+# timeout), we PAUSE the channel (persisted in data/.state), notify, and keep
+# running the free ATS scan — we NEVER hard-fail the run. At the next run start
+# a cheap, read-only probe auto-resumes the channel if credits are back.
+_STATE = "apify"
+_CREDIT_HINTS = ("payment required", "monthly usage", "hard limit", "usage limit",
+                 "limit-exceeded", "limit exceeded", "exceeded", "insufficient",
+                 "credit", "quota", "out of credit")
+
+
+def _sources_apify(cfg: dict) -> dict:
+    src = (cfg.get("sources", {}) or {}).get("apify")
+    if src is not None:
+        return src or {}
+    # Back-compat: older configs kept the flag under profile.discovery.apify.
+    return (cfg.get("discovery", {}) or {}).get("apify", {}) or {}
+
+
+def is_paused() -> bool:
+    return bool(state.read(_STATE).get("paused"))
+
+
+def pause(reason: str) -> None:
+    state.write(_STATE, {"paused": True, "reason": reason,
+                         "paused_at": datetime.now(timezone.utc).isoformat()})
+    print(f"⚠ Apify auto-paused: {reason}. Continuing with the free ATS scan only.",
+          file=sys.stderr)
+
+
+def resume() -> None:
+    state.clear(_STATE)
+
+
+def is_credit_or_quota_error(status: int, body: str) -> bool:
+    """Out-of-credits / quota shape. HTTP 402 (Payment Required) is definitive;
+    401/403/429 count only when the body carries a credit/quota message."""
+    if status == 402:
+        return True
+    b = (body or "").lower()
+    return status in (401, 403, 429) and any(h in b for h in _CREDIT_HINTS)
+
+
+# Read-only usage endpoint + fields, VERIFIED live on 2026-06-18 against this
+# account: /users/me → data.plan.maxMonthlyUsageUsd (the cap); /users/me/usage/
+# monthly → data.totalUsageCreditsUsdAfterVolumeDiscount (consumed this cycle) +
+# data.usageCycle.endAt (when it resets). We require a little headroom to resume.
+USAGE_MONTHLY = "https://api.apify.com/v2/users/me/usage/monthly"
+_MIN_HEADROOM_USD = 0.10
+
+
+def probe(token: str) -> tuple[bool, str]:
+    """Cheap, read-only auto-resume check. Returns (credits_available, note) from
+    the real Apify usage fields. Falls back to optimistic-resume if the plan does
+    not expose usage (the next fetch would 402 and re-pause — self-correcting)."""
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        me = requests.get(USERS_ME, headers=headers, timeout=20)
+        if me.status_code != 200:
+            return (not is_credit_or_quota_error(me.status_code, me.text)), f"users/me HTTP {me.status_code}"
+        plan = ((me.json() or {}).get("data") or {}).get("plan") or {}
+        limit = plan.get("maxMonthlyUsageUsd")
+
+        used, resets = None, ""
+        um = requests.get(USAGE_MONTHLY, headers=headers, timeout=20)
+        if um.status_code == 200:
+            ud = (um.json() or {}).get("data") or {}
+            used = ud.get("totalUsageCreditsUsdAfterVolumeDiscount")
+            resets = ((ud.get("usageCycle") or {}).get("endAt") or "")[:10]
+    except Exception as e:  # noqa: BLE001
+        return False, f"probe failed: {e}"
+
+    if isinstance(limit, (int, float)) and isinstance(used, (int, float)):
+        available = (limit - used) >= _MIN_HEADROOM_USD
+        note = f"used ${used:.2f}/${limit:.0f}" + (f", cycle resets {resets}" if resets else "")
+        return available, note
+    return True, "account reachable (usage not exposed)"
+
+
 class ApifyProvider:
     id = "apify"
 
     def enabled(self, cfg: dict) -> bool:
-        sub = (cfg.get("discovery", {}) or {}).get("apify", {}) or {}
-        if sub.get("enabled") is False:
+        sub = _sources_apify(cfg)
+        if not sub.get("enabled"):
+            self._skip = "off in config/sources.yml (set enabled: true + APIFY_TOKEN in .env)"
             return False
-        return bool(os.environ.get("APIFY_TOKEN"))
+        if not os.environ.get("APIFY_TOKEN"):
+            self._skip = "enabled but no APIFY_TOKEN in .env"
+            return False
+        if is_paused():
+            st = state.read(_STATE)
+            ok, note = probe(os.environ["APIFY_TOKEN"])
+            if ok:
+                resume()
+                print(f"✓ Apify credits look available again ({note}) — auto-resumed.", file=sys.stderr)
+            else:
+                self._skip = (f"auto-paused ({st.get('reason', 'credits/quota')}); "
+                              f"probe: {note}. Running ATS-only.")
+                return False
+        return True
 
     def fetch(self, query: Query, cfg: dict) -> list[JobPosting]:
         token = os.environ.get("APIFY_TOKEN")
         if not token:
             return []
-        sub = (cfg.get("discovery", {}) or {}).get("apify", {}) or {}
+        sub = _sources_apify(cfg)
         platforms = sub.get("platforms", DEFAULT_PLATFORMS)
         actors = sub.get("actors", {})            # optional per-platform actor override
         per = int(sub.get("limit", min(40, query.limit_per_channel)))
         titles = query.titles[:6] or ([query.raw_keywords] if query.raw_keywords else [])
         headers = {"Authorization": f"Bearer {token}"}
-        out, errors = [], []
+        out, errors, timeouts = [], [], 0
 
         for plat in platforms:
             spec = PLATFORMS.get(plat)
@@ -203,6 +299,13 @@ class ApifyProvider:
                     json=spec["input"](titles, query.location, per),
                     headers=headers, timeout=TIMEOUT + 40)
                 if r.status_code >= 300:
+                    # The trigger we must never guess wrong: out-of-credits/quota
+                    # → auto-pause and STOP (the other platforms will fail the
+                    # same way), but do not raise — the run continues ATS-only.
+                    if is_credit_or_quota_error(r.status_code, r.text):
+                        pause(f"HTTP {r.status_code} on {plat}: {r.text[:120]}")
+                        errors.append(f"{plat}: out-of-credits/quota (HTTP {r.status_code}) → Apify auto-paused")
+                        break
                     errors.append(f"{plat} ({actor}): HTTP {r.status_code} {r.text[:120]}")
                     continue
                 items = r.json()
@@ -211,7 +314,17 @@ class ApifyProvider:
                         jp = spec["map"](it)
                         if jp and jp.title:
                             out.append(jp)
+            except requests.Timeout:
+                timeouts += 1
+                errors.append(f"{plat} ({actor}): timeout")
             except Exception as e:
                 errors.append(f"{plat} ({actor}): {e}")
+
+        # Repeated timeouts across platforms → treat the channel as unavailable
+        # and pause so future runs don't keep hanging. A single timeout is logged.
+        if timeouts >= 2:
+            pause(f"repeated timeouts ({timeouts} platforms)")
+            errors.append("repeated timeouts → Apify auto-paused")
+
         self.last_errors = errors
         return out

@@ -1,43 +1,277 @@
-"""Tier-0 pre-screen — a free, deterministic gate before any LLM call.
+"""Deterministic pre-screen — the VOLUME-SAFETY gate before any LLM call.
 
-The owner's idea: don't full-evaluate obvious no's. The safest, cheapest version
-uses the STRUCTURED fields we already have (experience bands + salary, strongest
-from Naukri/Apify) against the profile's [GATE] values. It rejects only CLEAR,
-citable mismatches; anything uncertain passes through to the full-JD LLM scoring.
+This is the fix for the failure mode where ~907 candidates were sent to the
+scorer (× self-consistency samples ≈ thousands of LLM calls). A free, fast,
+title/seniority/function/hard-constraint gate (the career-ops `title_filter`
+pattern: positive + negative matching) cuts the set to a bounded ~30–50 BEFORE
+the expensive holistic scorer runs. A hard `max_llm_jobs` cap guarantees an
+all-day / credits-gone run is impossible.
 
-Crucially this is a COST FILTER, not the fit verdict — it never *advances* a job
-on thin signal (that would risk the buried-requirement trap the owner found in
-round 2); it only removes the unambiguous misfits (over-senior, below-floor)
-that an LLM pass would also reject, saving the call.
+Design rules (unchanged from the project's ethos):
+  • This is a COST filter, not the fit verdict. It removes the clearly-wrong
+    (wrong role family, over-senior title, foreign / non-commutable onsite) and
+    ranks the rest; the honest holistic rubric still makes the real call.
+  • Conservative on ambiguity: anything that *might* fit passes through.
+  • No silent truncation: if the kept set exceeds the cap, the caller is told
+    exactly how many were dropped to the cap (`report["truncated_from"]`).
 """
 
 from __future__ import annotations
 
+import re
+from collections import Counter
+
 from .schema import JobPosting
 
+# ── Role-family POSITIVES (career-ops title_filter "positive") ───────────────
+# Explicit role-family phrases for a delivery / program / product / solutions
+# profile. We also mine the user's own profile (primary titles, archetypes,
+# in_scope), so this adapts per user. A title with NO role-family signal is
+# almost always an IC / other-function role → the dominant volume cut.
+_DEFAULT_POSITIVE = [
+    "program manager", "technical program manager", "tpm", "program lead",
+    "project manager", "delivery manager", "delivery lead", "delivery head",
+    "implementation manager", "implementation lead", "implementation consultant",
+    "implementation specialist", "onboarding manager", "engagement manager",
+    "product manager", "product owner", "product lead", "group product manager",
+    "technical product manager", "solutions consultant", "solution consultant",
+    "solutions architect", "solution architect", "solutions engineer",
+    "solutions manager", "customer success", "professional services",
+    "transformation manager", "ai delivery", "ai implementation",
+    "ai engineer",  # applied AI engineering = the candidate's "adjacent" stretch
+]
 
-def prescreen(job: JobPosting, profile: dict) -> tuple[bool, str]:
-    """Return (passes, reason). passes=False → skip the LLM, deterministic
-    DON'T APPLY with `reason`. Conservative: only rejects clear structured misfits."""
+# A generic leadership head + an AI/ML qualifier together is also a positive
+# (catches "GenAI Product Lead", "AI Solutions Specialist", "Generative AI
+# Consultant") without admitting IC engineering roles that merely mention AI.
+_COMBO_HEADS = ["manager", "lead", "owner", "consultant", "architect", "specialist"]
+
+# ── Clearly-wrong FUNCTIONS (career-ops title_filter "negative") ─────────────
+_DEFAULT_NEGATIVE = [
+    "data scientist", "research scientist", "applied scientist", "research engineer",
+    "machine learning engineer", "ml engineer", "deep learning", "nlp engineer",
+    "computer vision", "software engineer", "software developer", "backend engineer",
+    "back end engineer", "frontend engineer", "front end engineer", "full stack",
+    "fullstack", "android engineer", "ios engineer", "mobile engineer",
+    "platform engineer", "systems engineer", "devops", "site reliability", "sre",
+    "data engineer", "security engineer", "qa engineer", "test engineer",
+    "quality engineer", "automation engineer", "account executive", "sales development",
+    "business development", "recruiter", "talent acquisition", "graphic designer",
+    "ux designer", "ui designer", "content writer", "accountant", "controller",
+    "people partner", "intern",
+]
+
+# ── Seniority ABOVE the candidate's honest ceiling (manager / mid-IC) → drop ──
+_SENIOR_OVER = [
+    "director", "vice president", "vp", "svp", "evp", "head of", "chief",
+    "cto", "ceo", "coo", "cpo", "cfo", "principal", "staff", "distinguished",
+]
+
+# AI qualifiers (whole-word) — gate combo + ranking.
+_AI_TERMS = ["ai", "ml", "genai", "gen ai", "llm", "machine learning",
+             "artificial intelligence", "generative"]
+
+# ── Location tokens for the hard-constraint gate ─────────────────────────────
+_INDIA_CITIES = [
+    "hyderabad", "secunderabad", "bengaluru", "bangalore", "mumbai", "pune", "delhi",
+    "new delhi", "gurgaon", "gurugram", "noida", "chennai", "kolkata", "ahmedabad",
+    "jaipur", "indore", "kochi", "coimbatore", "chandigarh", "trivandrum",
+    "thiruvananthapuram", "ncr",
+]
+_INDIA_TOKENS = _INDIA_CITIES + ["india", "bharat", "telangana", "karnataka",
+                                 "maharashtra", "tamil nadu", "kerala"]
+_FOREIGN_TOKENS = [
+    "united states", "usa", "us", "u.s", "united kingdom", "uk", "canada", "france",
+    "germany", "netherlands", "spain", "mexico", "singapore", "dubai", "uae",
+    "australia", "ireland", "europe", "emea", "americas", "brazil", "poland",
+    "japan", "china", "london", "new york", "san francisco", "seattle", "toronto",
+    "california",
+]
+_REMOTE_TOKENS = ["remote", "anywhere", "work from home", "wfh"]
+
+
+def _compile(phrases) -> list[re.Pattern]:
+    rx = []
+    for p in phrases:
+        p = (p or "").strip().lower()
+        if len(p) >= 2:
+            rx.append(re.compile(r"\b" + re.escape(p) + r"\b", re.I))
+    return rx
+
+
+def _match_any(regexes: list[re.Pattern], text: str):
+    """Return the actual matched substring (for a clean drop reason) or None."""
+    if not text:
+        return None
+    for r in regexes:
+        m = r.search(text)
+        if m:
+            return m.group(0)
+    return None
+
+
+# Profile-independent patterns, compiled once.
+_NEGATIVE_RX = _compile(_DEFAULT_NEGATIVE)
+_SENIOR_RX = _compile(_SENIOR_OVER)
+_AI_RX = _compile(_AI_TERMS)
+_COMBO_RX = _compile(_COMBO_HEADS)
+_INDIA_RX = _compile(_INDIA_TOKENS)
+_FOREIGN_RX = _compile(_FOREIGN_TOKENS)
+
+
+def _profile_positives(profile: dict) -> list[str]:
+    out = set(_DEFAULT_POSITIVE)
+    tr = profile.get("target_roles", {}) or {}
+    for t in tr.get("primary", []) or []:
+        out.add((t or "").lower().strip())
+    for a in tr.get("archetypes", []) or []:
+        nm = (a.get("name") or "").lower().strip()
+        if nm:
+            out.add(nm)
+    for f in (profile.get("function", {}) or {}).get("in_scope", []) or []:
+        out.add((f or "").lower().strip())
+    return sorted(p for p in out if len(p) >= 3)
+
+
+def _is_positive(title: str, role_rx: list[re.Pattern]) -> bool:
+    """Title is in the target role family: an explicit role-family phrase, OR a
+    generic leadership head paired with an AI/ML qualifier."""
+    if _match_any(role_rx, title):
+        return True
+    if _match_any(_AI_RX, title) and _match_any(_COMBO_RX, title):
+        return True
+    return False
+
+
+def _structured_gate(job: JobPosting, profile: dict, run_cfg: dict) -> tuple[bool, str]:
+    """Original Tier-0 gate: drop on clearly-over-senior stated experience or
+    disclosed comp below the floor. Fires only when the structured field exists."""
     sen = profile.get("seniority", {}) or {}
     comp = profile.get("compensation", {}) or {}
     years_total = sen.get("years_total")
+    buf = (run_cfg.get("prescreen", {}) or {}).get("seniority_buffer_years", 3)
 
-    # 1) Experience requirement clearly beyond reach (e.g. a 12+/15+/20-yr role
-    #    for an ~8-yr candidate). Buffer of +3 so borderline cases still get the
-    #    full LLM read.
     if job.experience_min is not None and years_total:
-        if job.experience_min >= years_total + 3:
-            return False, (f"JD requires {job.experience_min:g}+ years; you have ~{years_total:g} "
-                           f"total — clearly above your level.")
+        if job.experience_min >= years_total + buf:
+            return False, f"JD requires {job.experience_min:g}+ yrs; you have ~{years_total:g} total"
 
-    # 2) Disclosed comp clearly below the walk-away floor (INR/LPA). Only fires
-    #    when salary is actually stated (most Naukri posts hide it → pass through).
     floor = comp.get("floor_ctc_lpa")
-    if floor and job.salary_max and (job.salary_currency in (None, "INR", "inr", "Rs", "INR ")):
-        lpa = job.salary_max / 100000.0          # rupees → lakhs/annum
+    if floor and job.salary_max and (job.salary_currency in (None, "INR", "inr", "Rs")):
+        lpa = job.salary_max / 100000.0
         if 0 < lpa < floor:
-            return False, (f"Stated max comp ~{lpa:.0f} LPA is below your floor of "
-                           f"{floor:g} LPA.")
-
+            return False, f"stated max comp ~{lpa:.0f} LPA below your floor of {floor:g} LPA"
     return True, ""
+
+
+def _location_gate(job: JobPosting, profile: dict) -> tuple[bool, str]:
+    """Hard constraints: drop foreign roles (even if remote — not India-eligible)
+    and onsite roles in a non-allowed city. Remote-India / unknown pass through."""
+    loc = (job.location or "").lower().strip()
+    if not loc:
+        return True, ""
+
+    foreign = _match_any(_FOREIGN_RX, loc)
+    india = _match_any(_INDIA_RX, loc)
+    if foreign and not india:
+        return False, f"foreign location ('{foreign}' — not India-eligible)"
+
+    locp = profile.get("location", {}) or {}
+    if locp.get("willing_to_relocate"):
+        return True, ""
+    if job.remote or any(t in loc for t in _REMOTE_TOKENS):
+        return True, ""  # remote handled (India-eligibility checked above)
+    onsite = [c.lower() for c in (locp.get("onsite_cities") or [])]
+    named = [c for c in _INDIA_CITIES if c in loc]
+    if named and onsite and not any(o in loc for o in onsite):
+        return False, f"onsite in {named[0].title()} (you're onsite-{onsite[0].title()} only)"
+    return True, ""
+
+
+def _gate(job: JobPosting, profile: dict, run_cfg: dict,
+          role_rx: list[re.Pattern]) -> tuple[bool, str]:
+    """Run all deterministic gates on one job. (passes, drop_reason)."""
+    title = (job.title or "").strip()
+    if not title:
+        return False, "no title"
+
+    over = _match_any(_SENIOR_RX, title)
+    if over:
+        return False, f"over-senior title ('{over}' — above your manager/mid ceiling)"
+
+    if not _is_positive(title, role_rx):
+        neg = _match_any(_NEGATIVE_RX, title)
+        return False, (f"wrong-function title ('{neg}')" if neg else "title not in target role family")
+
+    ok, why = _structured_gate(job, profile, run_cfg)
+    if not ok:
+        return False, why
+    ok, why = _location_gate(job, profile)
+    if not ok:
+        return False, why
+    return True, ""
+
+
+def _relevance(job: JobPosting, role_rx: list[re.Pattern]) -> float:
+    """Cheap deterministic relevance for ranking the kept set before the cap."""
+    title = job.title or ""
+    s = 0.0
+    if _match_any(role_rx, title):
+        s += 3.0
+    if _match_any(_AI_RX, title):
+        s += 2.0
+    if _match_any(_COMBO_RX, title):
+        s += 0.5
+    if _match_any(_AI_RX, (job.description or "")[:2000]):
+        s += 0.5
+    if job.link_verified:
+        s += 0.25
+    return s
+
+
+def prescreen_set(jobs: list[JobPosting], profile: dict,
+                  run_cfg: dict | None = None) -> tuple[list[JobPosting], dict]:
+    """Cut + rank the candidate set to a bounded, scoreable list.
+
+    Returns (kept, report). `kept` is at most `prescreen.max_llm_jobs` jobs,
+    ranked best-first. `report` carries the funnel counts and drop-reason
+    breakdown for honest logging — including `truncated_from` (set when the cap
+    removed jobs, so truncation is never silent).
+    """
+    run_cfg = run_cfg or {}
+    cap = int((run_cfg.get("prescreen", {}) or {}).get("max_llm_jobs", 40))
+    role_rx = _compile(_profile_positives(profile))
+
+    kept: list[JobPosting] = []
+    dropped: list[tuple[JobPosting, str]] = []
+    for j in jobs:
+        ok, why = _gate(j, profile, run_cfg, role_rx)
+        if ok:
+            kept.append(j)
+        else:
+            dropped.append((j, why))
+
+    kept.sort(key=lambda j: (_relevance(j, role_rx), j.posted_at or ""), reverse=True)
+
+    truncated_from = None
+    if len(kept) > cap:
+        truncated_from = len(kept)
+        kept = kept[:cap]
+
+    report = {
+        "input": len(jobs),
+        "kept": len(kept),
+        "dropped": len(dropped),
+        "cap": cap,
+        "truncated_from": truncated_from,
+        "by_reason": dict(Counter(why for _, why in dropped).most_common()),
+        "dropped_samples": [{"title": j.title, "company": j.company, "reason": why}
+                            for j, why in dropped[:200]],
+    }
+    return kept, report
+
+
+def prescreen(job: JobPosting, profile: dict, run_cfg: dict | None = None) -> tuple[bool, str]:
+    """Single-job deterministic verdict (passes, reason) — kept for tests and as
+    a safety check. The set-level `prescreen_set` is what bounds a real run."""
+    role_rx = _compile(_profile_positives(profile))
+    return _gate(job, profile, run_cfg or {}, role_rx)

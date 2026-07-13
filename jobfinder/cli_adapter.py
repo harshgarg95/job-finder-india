@@ -39,11 +39,14 @@ class CliAdapter:
     note: str = ""
     # extra environment variables needed for a non-interactive run (k, v) pairs
     env: tuple[tuple[str, str], ...] = ()
+    # stdout capture mode: "text" = parse raw stdout; "json" = parse the CLI's
+    # --output-format json envelope (reliable error detection + per-call cost).
+    output_format: str = "text"
 
 
 # Headless invocations verified from each CLI's official docs (docs/research/03).
 ADAPTERS: dict[str, CliAdapter] = {
-    "claude":   CliAdapter("claude",   "claude",   ("-p",),            "stdin", "Anthropic; top structured-output quality (paid)"),
+    "claude":   CliAdapter("claude",   "claude",   ("-p", "--output-format", "json"), "stdin", "Anthropic; top structured-output quality (paid)", output_format="json"),
     "gemini":   CliAdapter("gemini",   "gemini",   ("-p",),            "arg",   "Google; free OAuth tier ends Jun-18-2026 for individuals",
                            env=(("GEMINI_CLI_TRUST_WORKSPACE", "true"),)),  # required for headless runs
     "codex":    CliAdapter("codex",    "codex",    ("exec",),          "arg",   "OpenAI; supports local Ollama via `--oss` (free/offline)"),
@@ -53,10 +56,11 @@ ADAPTERS: dict[str, CliAdapter] = {
     "copilot":  CliAdapter("copilot",  "copilot",  ("-p",),            "arg",   "GitHub; usage-based AI credits"),
     "cursor":   CliAdapter("cursor",   "agent",    ("-p",),            "arg",   "Cursor; hosted models, paid"),
     "kimi":     CliAdapter("kimi",     "kimi",     ("-p", "--quiet"),  "arg",   "Moonshot; self-host K2 possible"),
+    "ollama":   CliAdapter("ollama",   "ollama",   ("run", os.environ.get("JOBFINDER_OLLAMA_MODEL", "llama3.1:8b")), "stdin", "Local Ollama model (free/offline; quality depends on the model)"),
 }
 
 # Local-capable set we steer privacy/cost-sensitive users toward (docs/research/03 §CLIs-with-local).
-LOCAL_CAPABLE = {"codex", "qwen", "opencode", "aider", "kimi"}
+LOCAL_CAPABLE = {"codex", "qwen", "opencode", "aider", "kimi", "ollama"}
 
 
 def detect_clis() -> list[dict]:
@@ -109,15 +113,10 @@ def _is_failover_error(msg: str) -> bool:
     return any(h in m for h in _FAILOVER_HINTS)
 
 
-def _score_one(prompt: str, cli: str, *, timeout: int,
-               runner: Optional[Callable[[list[str], str], str]]) -> dict:
-    """Drive ONE CLI and return parsed JSON. Raises on any failure."""
-    adapter = ADAPTERS.get(cli)
-    if adapter is None:
-        raise RuntimeError(f"Unknown CLI '{cli}'. Known: {', '.join(ADAPTERS)}")
-    if runner is None and not shutil.which(adapter.bin):
-        raise RuntimeError(f"CLI '{cli}' not on PATH.")
-
+def _invoke(adapter: CliAdapter, prompt: str, *, timeout: int,
+            runner: Optional[Callable[[list[str], str], str]]) -> tuple[str, Optional[float]]:
+    """Run ONE CLI once. Returns (text_to_parse, cost_usd). Raises on any
+    failure — non-zero exit, or a json-envelope `is_error` (auth/quota)."""
     argv = [adapter.bin, *adapter.args]
     # Delivery is per-CLI: arg-delivery CLIs (e.g. gemini -p) REQUIRE the prompt
     # as an argument — they error if it's only on stdin. They handle large args
@@ -135,12 +134,41 @@ def _score_one(prompt: str, cli: str, *, timeout: int,
         proc = subprocess.run(argv, input=stdin_text, capture_output=True,
                               text=True, timeout=timeout, env=run_env)
         if proc.returncode != 0:
-            raise RuntimeError(f"CLI '{cli}' exited {proc.returncode}: {proc.stderr[:400]}")
+            raise RuntimeError(f"exited {proc.returncode}: {(proc.stderr or proc.stdout)[:400]}")
         out = proc.stdout
 
-    parsed = _extract_json(out)
+    if adapter.output_format == "json":
+        # e.g. `claude -p --output-format json` wraps the model's text in an
+        # envelope: {is_error, result, total_cost_usd, ...}. Parse it so we
+        # surface auth/quota errors HONESTLY and capture per-call cost.
+        try:
+            env = json.loads(out)
+        except json.JSONDecodeError:
+            env = None
+        if isinstance(env, dict) and ("result" in env or "is_error" in env):
+            if env.get("is_error"):
+                raise RuntimeError(str(env.get("result") or env.get("subtype") or "CLI reported is_error"))
+            return str(env.get("result", "")), env.get("total_cost_usd")
+        # Envelope wasn't the expected shape — fall back to raw stdout.
+        return out, None
+    return out, None
+
+
+def _score_one(prompt: str, cli: str, *, timeout: int,
+               runner: Optional[Callable[[list[str], str], str]]) -> dict:
+    """Drive ONE CLI and return parsed JSON. Raises on any failure."""
+    adapter = ADAPTERS.get(cli)
+    if adapter is None:
+        raise RuntimeError(f"Unknown CLI '{cli}'. Known: {', '.join(ADAPTERS)}")
+    if runner is None and not shutil.which(adapter.bin):
+        raise RuntimeError(f"CLI '{cli}' not on PATH.")
+
+    text, cost = _invoke(adapter, prompt, timeout=timeout, runner=runner)
+    parsed = _extract_json(text)
     if parsed is None:
-        raise RuntimeError(f"CLI '{cli}' returned no parseable JSON: {out[:300]}")
+        raise RuntimeError(f"CLI '{cli}' returned no parseable JSON: {text[:300]}")
+    if cost is not None:
+        parsed.setdefault("_cost_usd", cost)
     return parsed
 
 
@@ -194,3 +222,44 @@ def score(
                 on_failover(c, nxt, str(e)[:160])
             continue
     raise RuntimeError("All CLIs failed:\n  " + "\n  ".join(errors))
+
+
+def health_check(
+    cli: Optional[str] = None,
+    *,
+    timeout: int = 60,
+    runner: Optional[Callable[[list[str], str], str]] = None,
+) -> dict:
+    """Drive ONE chosen CLI with a trivial prompt to confirm it authenticates
+    and returns output. Used by onboarding Step 2. NEVER raises — returns a
+    structured result the caller can display and loop back on (401/quota):
+
+        {"ok": bool, "cli": str|None, "error": str|None, "cost_usd": float|None}
+
+    Unlike score(), this does NOT fail over — it tests exactly the CLI the user
+    chose, so a 401/credit error surfaces instead of being masked by a fallback.
+    """
+    order = _failover_order(cli)
+    target = cli or (order[0] if order else None)
+    if not target:
+        return {"ok": False, "cli": None, "error": "No AI CLI found.", "cost_usd": None}
+    adapter = ADAPTERS.get(target)
+    if adapter is None:
+        return {"ok": False, "cli": target, "error": f"Unknown CLI '{target}'.", "cost_usd": None}
+    if runner is None and not shutil.which(adapter.bin):
+        return {"ok": False, "cli": target, "error": f"'{target}' not on PATH.", "cost_usd": None}
+
+    prompt = 'Reply with exactly this JSON and nothing else: {"ok": true}'
+    try:
+        text, cost = _invoke(adapter, prompt, timeout=timeout, runner=runner)
+    except Exception as e:  # noqa: BLE001 — report, don't raise (auth/quota/timeout)
+        return {"ok": False, "cli": target, "error": str(e)[:300], "cost_usd": None}
+
+    parsed = _extract_json(text)
+    ok = bool(parsed and parsed.get("ok") is True) or ("ok" in (text or "").lower())
+    return {
+        "ok": ok,
+        "cli": target,
+        "error": None if ok else f"unexpected reply: {(text or '')[:160]}",
+        "cost_usd": cost,
+    }

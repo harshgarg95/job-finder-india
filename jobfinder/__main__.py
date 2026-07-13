@@ -1,6 +1,8 @@
 """job-finder CLI dispatch.
 
   python -m jobfinder [--resume … ]      → discover + score + rank (default)
+  python -m jobfinder doctor [--json]    → cold-start setup check
+  python -m jobfinder onboard            → first-run guided setup
   python -m jobfinder dashboard          → local tracker UI (feedback loop)
   python -m jobfinder feedback --job …   → record a correction from the CLI
 """
@@ -10,6 +12,14 @@ import sys
 
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+
+    if argv and argv[0] == "doctor":
+        from .doctor import main as doctor_main
+        return doctor_main(argv[1:])
+
+    if argv and argv[0] == "onboard":
+        from .onboard import cmd as onboard_cmd
+        return onboard_cmd(argv[1:])
 
     if argv and argv[0] == "dashboard":
         from .dashboard import serve

@@ -1,0 +1,35 @@
+# ─────────────────────────────────────────────────────────────────────────
+# job-finder discovery sources — copy to config/sources.yml and edit.
+# (User Layer: never auto-updated by a system update. See DATA_CONTRACT.md.)
+#
+# Which discovery channels run, and how. The free public-ATS scan is ON by
+# default and needs no key. The other two are opt-in and need a key in .env
+# (which is gitignored — your token never enters this file or the repo).
+# ─────────────────────────────────────────────────────────────────────────
+
+# Channel A — free, zero-key, default. Reads public Greenhouse/Lever/Ashby/
+# Workable feeds for the curated India tenant list (config/ats_tenants.india.yml).
+ats:
+  enabled: true
+
+# Channel B — optional. Google Jobs index via your own SerpAPI/Serper key.
+google_jobs:
+  enabled: false            # set SERPAPI_KEY or SERPER_API_KEY in .env, then true
+
+# Channel C — optional, BYO-token. Reaches India-native boards (Naukri) +
+# LinkedIn/Indeed via Apify community actors. Runs bill to YOUR Apify account.
+#
+# AUTO-PAUSE: if a run hits an out-of-credits / quota / HTTP-402 error or
+# repeated timeouts, job-finder flips Apify to paused, logs it, notifies you,
+# and continues with the free ATS scan — it never hard-fails the run. At the
+# next run start it does one cheap, read-only probe and auto-resumes if your
+# credits are back. (Pause state lives in data/.state/apify.json, not here, so
+# this file stays yours to edit.)
+apify:
+  enabled: false            # set APIFY_TOKEN in .env, then true (or onboarding does it)
+  platforms: ["naukri", "linkedin", "indeed"]
+  limit: 40                 # max items per platform per run
+  # actors:                 # optional — override the default actor per platform
+  #   naukri: "memo23/naukri-scraper"
+  #   linkedin: "curious_coder/linkedin-jobs-scraper"
+  #   indeed: "misceres/indeed-scraper"
