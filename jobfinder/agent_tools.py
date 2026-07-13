@@ -23,6 +23,7 @@ import sys
 
 import yaml
 
+from . import progress
 from . import run as R
 from .dedup import dedupe
 from .discovery import apify
@@ -87,6 +88,8 @@ def cmd_discover(argv: list[str]) -> int:
     by_source: dict[str, int] = {}
     for j in cand:
         by_source[j.source] = by_source.get(j.source, 0) + 1
+    progress.emit(f"discovery: {sum(r.count for r in reports if r.enabled)} raw → "
+                  f"{len(cand)} candidates")
     print(json.dumps({
         "raw": sum(r.count for r in reports if r.enabled),
         "candidates": len(cand),

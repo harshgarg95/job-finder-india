@@ -12,24 +12,36 @@ host model) in this session. No headless model call.
 > verdict JSON and saving it with `tracker --add` is the entire act of scoring.
 
 ## Procedure
+> **Announce each long step BEFORE you run it** (discover / prescreen / score) —
+> one line saying what's about to happen and the rough time ("Running discovery…
+> ~1–2 min"). The Python tools ALSO stream human progress to stderr as they work
+> (`discovery: greenhouse 526 · adzuna 93`, `prescreen: 1063→40`), so a watching
+> user can see the run is moving, not stuck — but you still narrate the step and,
+> for scoring (which is YOU, not a tool), post "N/total" progress yourself.
+
 1. **Gate.** `python -m jobfinder doctor --json`. If `needs_onboarding` → go to
    `modes/onboarding.md` and stop.
 2. **Load the law.** Read `modes/_shared.md` (→ `prompts/_rubric.md` + `score-job.md`),
    then `resume.md` and `config/profile.yml` (+ `config/_profile.md`). Also run
    `python -m jobfinder preferences --context` and hold that block as a **tie-breaker
    for BORDERLINE (≈3.5–4.2) calls only** — it never overrides the rubric or a hard gate.
-3. **Discover.** `python -m jobfinder discover --json`. Report the funnel, per-channel
+3. **Discover.** Say "Running discovery across the ATS floor + Adzuna/JSearch… (~1–2 min)"
+   first, then `python -m jobfinder discover --json`. Report the funnel, per-channel
    states, `candidates_by_source`, and `quota_remaining` (monthly free-tier left per
    channel). Adzuna is the co-primary India-native channel; JSearch fills in only when
    Adzuna is thin (a `skipped: adzuna sufficient` is the quota-saving gap-fill, not an
    error); Apify deep-mode is off by default; the ATS floor always runs.
-4. **Prescreen (the cap + the full-score cutoff).** `python -m jobfinder prescreen --json`.
+4. **Prescreen (the cap + the full-score cutoff).** Say "Prescreening the candidates down
+   to the cap…", then `python -m jobfinder prescreen --json`.
    It returns the bounded, RANKED list (≤ `run.yml: max_llm_jobs`) plus **`score_these`** —
    the top `full_score_top_n` (default 15) by prescreen rank. **Full-score ONLY the jobs in
    `score_these`.** The rest are auto-listed by the tracker under "Prescreen-filtered (not
    individually scored)" with their deterministic reason — do NOT score them, and do NOT
    invent verdicts for them. (This is the latency win: 15 scored, not 40.)
 5. **Score each job in `score_these`, in-session — YOU are the scorer, one job at a time.**
+   First tell the user how many you're about to score ("Scoring the top 15 in-session — I'll
+   note progress as I go"). Scoring is YOU, not a tool, so **post your own progress** every few
+   jobs ("Scoring 3/15…") — a long scoring pass must never look stuck.
    For each `job_id` in `score_these`:
    1. **Enrich:** `python -m jobfinder enrich <job_id>` → read `verifiability.status` and
       `location_gate.status` from its JSON output.

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ..progress import emit as _emit
 from ..schema import JobPosting
 from .ats import AtsProvider
 from .adzuna import AdzunaProvider
@@ -65,6 +66,7 @@ def discover(query: Query, cfg: dict) -> tuple[list[JobPosting], list[ChannelRep
             src_count = counts.get(after)
             trig = _trigger_below(cfg, p.id)
             if src_count is not None and src_count >= trig:
+                _emit(f"discovery: {p.id} skipped ({after} sufficient, {src_count}≥{trig})")
                 reports.append(ChannelReport(
                     p.id, False,
                     skipped_reason=f"{after} sufficient ({src_count} ≥ {trig}) — quota saved"))
@@ -91,11 +93,13 @@ def discover(query: Query, cfg: dict) -> tuple[list[JobPosting], list[ChannelRep
             jobs = p.fetch(query, cfg)
             all_jobs.extend(jobs)
             counts[p.id] = len(jobs)
+            _emit(f"discovery: {p.id} {len(jobs)}")
             rep = ChannelReport(p.id, True, count=len(jobs))
             # Providers record their own per-request/per-tenant errors on `last_errors`.
             rep.errors = list(getattr(p, "last_errors", []) or [])
             reports.append(rep)
         except Exception as e:
+            _emit(f"discovery: {p.id} failed ({str(e)[:50]})")
             reports.append(ChannelReport(p.id, True, errors=[f"fetch() failed: {e}"]))
 
     return all_jobs, reports

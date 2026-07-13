@@ -67,16 +67,21 @@ def test_work_mode_maps_to_gate_location():
     print("✓ work_mode → remote_ok / hybrid_ok / onsite_cities [GATE] mapping")
 
 
-def test_validate_missing_required_no_write():
+def test_validate_only_requires_workmode_and_roles():
     d = _root()
-    res = onboard.write_from_answers({"full_name": "X"})     # missing almost everything
+    res = onboard.write_from_answers({"full_name": "X"})     # no work_mode, no target_roles
     assert res.get("error") and res.get("problems")
-    assert any("floor_ctc_lpa" in p for p in res["problems"])
+    assert any("target_roles" in p for p in res["problems"])
     assert any("work_mode" in p for p in res["problems"])
+    # everything else is derived-with-default / optional — NOT a validation failure
+    assert not any("floor_ctc_lpa" in p for p in res["problems"])   # comp floor optional now
+    assert not any("full_name" in p for p in res["problems"])       # name derived/optional
+    assert not any("years" in p for p in res["problems"])           # years optional
+    assert not any("honest_ceiling" in p for p in res["problems"])  # ceiling defaulted
     assert not os.path.exists(os.path.join(d, "config", "profile.yml"))   # nothing written
     r2 = onboard.write_from_answers(_full_answers(work_mode="onsite"))     # onsite w/o cities
     assert r2.get("error") and any("onsite_cities" in p for p in r2["problems"])
-    print("✓ validation rejects missing required + onsite-without-city; no partial write")
+    print("✓ only work-mode + target_roles required; name/years/floor optional; onsite needs a city")
 
 
 def test_resume_too_short_is_rejected():
@@ -154,25 +159,20 @@ def test_direct_run_writes_valid_profile_and_resume():
 
 def test_direct_run_loops_until_required_present():
     d = _root()
-    calls = {"floor": 0}
+    calls = {"roles": 0}
 
     def input_fn(p, default=""):
-        pl = p.lower()
-        if "floor" in pl:
-            calls["floor"] += 1
-            return "" if calls["floor"] == 1 else "20"     # missing first pass → re-asked
-        return {"full name": "H G", "email": "", "base city": "Hyderabad, India",
-                "target roles": "AI PM", "years total": "8", "target function": "2.5",
-                "target comp": "", "hard constraints": ""}.get(
-            next((k for k in ("full name", "email", "base city", "target roles", "years total",
-                              "target function", "target comp", "hard constraints") if k in pl), ""), "")
+        if "target roles" in p.lower():
+            calls["roles"] += 1
+            return default if calls["roles"] == 1 else "AI PM"   # empty(→[]) first pass → re-asked
+        return default                                            # accept derived defaults / skip optionals
 
     rc = _run_direct({"résumé": onboard._RESUME_CHOICES[0], "ceiling": "Mid",
                       "work-mode": "Remote", "relocat": "No"}, input_fn, resume="y" * 400)
-    assert rc == 0 and calls["floor"] >= 2                  # re-asked the missing floor, then wrote
+    assert rc == 0 and calls["roles"] >= 2                  # re-asked the missing target_roles, then wrote
     prof = yaml.safe_load(open(os.path.join(d, "config", "profile.yml"), encoding="utf-8"))
-    assert prof["compensation"]["floor_ctc_lpa"] == 20
-    print("✓ direct-run loops until required fields present (re-asks, then writes)")
+    assert prof["target_roles"]["primary"] == ["AI PM"]
+    print("✓ direct-run loops until required fields present (re-asks target_roles, then writes)")
 
 
 def test_resume_choices_exactly_three_no_template():
@@ -182,6 +182,59 @@ def test_resume_choices_exactly_three_no_template():
         assert banned not in joined, banned
     assert "paste" in joined and "path" in joined and "linkedin" in joined
     print("✓ résumé options are exactly paste / path / LinkedIn — no template/sample/describe")
+
+
+def test_parse_resume_fields_derives_and_is_safe():
+    text = ("HARSH GARG\nharsh.garg@example.com | Hyderabad, India\nSenior Product Manager\n\n"
+            "EXPERIENCE\nProduct Manager, Acme Corp    2019 - Present\n"
+            "Business Analyst, Beta Ltd    2016 - 2019\n"
+            "Led AI delivery, roadmap, stakeholder management across teams.")
+    p = onboard._parse_resume_fields(text)
+    assert p["email"] == "harsh.garg@example.com"
+    assert p["full_name"] == "HARSH GARG"
+    assert p["base_city"] == "Hyderabad, India"
+    assert isinstance(p["years_total"], int) and p["years_total"] > 0
+    assert p["target_roles"] and any("manager" in r.lower() for r in p["target_roles"])
+    assert onboard._parse_resume_fields("") == {}                 # never raises; {} on empty
+    assert isinstance(onboard._parse_resume_fields("!!! \n @@@ \n 123"), dict)
+    assert onboard._ceiling_from_years(8) == "Senior" and onboard._ceiling_from_years(None) == "Mid"
+    print("✓ _parse_resume_fields derives name/email/city/years/roles; safe on junk")
+
+
+def test_direct_run_minimal_only_workmode_relocate():
+    d = _root()
+    resume = ("HARSH GARG\nharsh@example.com | Pune, India\nSenior Product Manager\n"
+              "Product Manager, Acme  2018 - Present\nBusiness Analyst, Beta  2015 - 2018\n"
+              + "Delivery, roadmap, stakeholder management. " * 8)
+    # user presses Enter on EVERY derived/optional prompt (typed = "" → default);
+    # only the menus (work-mode, relocate, ceiling) are answered.
+    rc = _run_direct({"résumé": onboard._RESUME_CHOICES[0], "ceiling": "Senior",
+                      "work-mode": "Remote", "relocat": "No"},
+                     lambda p, default="": default, resume=resume)
+    assert rc == 0
+    prof = yaml.safe_load(open(os.path.join(d, "config", "profile.yml"), encoding="utf-8"))
+    assert prof["candidate"]["full_name"] == "HARSH GARG"          # derived, accepted with Enter
+    assert prof["location"]["base_city"] == "Pune, India"          # derived
+    assert prof["target_roles"]["primary"]                          # derived, non-empty
+    assert prof["compensation"]["floor_ctc_lpa"] is None            # skipped → no comp gate
+    assert prof["location"]["remote_ok"] is True
+    print("✓ onboarding completes with ONLY work-mode+relocate answered — rest derived/defaulted")
+
+
+def test_resume_derived_target_roles_prefills():
+    d = _root()
+    resume = ("Asha Rao\nasha@example.com\nHyderabad, India\n"
+              "Data Analyst, Acme  2020 - Present\nBusiness Analyst, Beta  2017 - 2020\n"
+              + "SQL, dashboards, stakeholder reporting. " * 8)
+    parsed = onboard._parse_resume_fields(resume)
+    assert parsed.get("target_roles")                              # parser suggested roles
+    rc = _run_direct({"résumé": onboard._RESUME_CHOICES[0], "ceiling": "Mid",
+                      "work-mode": "Remote", "relocat": "No"},
+                     lambda p, default="": default, resume=resume)  # Enter-accepts everything
+    assert rc == 0
+    prof = yaml.safe_load(open(os.path.join(d, "config", "profile.yml"), encoding="utf-8"))
+    assert prof["target_roles"]["primary"] == parsed["target_roles"]   # suggestion accepted as-is
+    print("✓ résumé-derived target_roles pre-fill and are accepted with Enter")
 
 
 def test_agents_gate_routes_to_terminal_no_bypass():

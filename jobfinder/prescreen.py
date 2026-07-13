@@ -295,6 +295,8 @@ def prescreen_set(jobs: list[JobPosting], profile: dict,
         "dropped_seen": dropped_seen,     # already-decided jobs removed (soft, logged)
         "demoted": demoted,               # look-alikes of rejected patterns, down-ranked
     }
+    from .progress import emit as _emit
+    _emit(f"prescreen: {len(jobs)}→{len(kept)} (cap {cap})")
     return kept, report
 
 

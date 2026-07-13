@@ -13,8 +13,10 @@ unless force=True. Templates (System Layer) are only ever COPIED into place.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
+import re
 import shutil
 import sys
 
@@ -98,56 +100,67 @@ def _num(v):
 
 
 def validate_answers(a: dict) -> list[str]:
-    """Return a list of problems with the answers (empty = valid). Guards the
-    REQUIRED [GATE] fields so we never write an empty/broken profile."""
+    """Return a list of problems with the answers (empty = valid).
+
+    STRICTLY required (the loop-until-valid set): `work_mode` (+ `onsite_cities`
+    when hybrid/onsite/mix) and a non-empty `target_roles` — the one thing a
+    résumé can't decide plus the one satisfied by the résumé-derived suggestion.
+    Everything else (name / city / years / ceiling / comp floor) is derived-with-
+    default or optional: onboarding never blocks on it, and _answers_to_profile
+    fills a safe, doctor-ready fallback. Fields that ARE supplied are still format-
+    checked (so the --answers automation path can't write a broken value)."""
     errs: list[str] = []
 
-    def need(k):
-        v = a.get(k)
-        if v is None or (isinstance(v, str) and not v.strip()) or (isinstance(v, list) and not v):
-            errs.append(f"missing required: {k}")
-            return False
-        return True
-
-    need("full_name")
-    need("base_city")
-    if a.get("floor_ctc_lpa") is None or _num(a.get("floor_ctc_lpa")) is None:
-        errs.append("missing/invalid number: floor_ctc_lpa")
-    if need("target_roles") and not isinstance(a["target_roles"], list):
+    roles = a.get("target_roles")
+    if not roles or (isinstance(roles, list) and not roles):
+        errs.append("missing required: target_roles")
+    elif not isinstance(roles, list):
         errs.append("target_roles must be a list of role titles")
-    for k in ("years_total", "years_in_function"):
-        if _num(a.get(k)) is None:
-            errs.append(f"missing/invalid number: {k}")
-    if need("honest_ceiling") and str(a.get("honest_ceiling", "")).lower() not in _CEILINGS:
-        errs.append(f"honest_ceiling must be one of {sorted(_CEILINGS)}")
+
     wm = str(a.get("work_mode", "")).lower()
     if wm not in _WORK_MODES:
         errs.append(f"work_mode must be one of {sorted(_WORK_MODES)}")
     elif wm in ("hybrid", "onsite", "mix") and not (a.get("onsite_cities") or []):
         errs.append(f"onsite_cities is required when work_mode is '{wm}'")
+
+    # format-only guards for OPTIONAL fields — flagged only when actually supplied
+    hc = a.get("honest_ceiling")
+    if hc is not None and str(hc).strip() and str(hc).lower() not in _CEILINGS:
+        errs.append(f"honest_ceiling must be one of {sorted(_CEILINGS)}")
+    for k in ("years_total", "years_in_function", "floor_ctc_lpa"):
+        if a.get(k) is not None and str(a.get(k)).strip() != "" and _num(a.get(k)) is None:
+            errs.append(f"invalid number: {k}")
     return errs
 
 
 def _answers_to_profile(a: dict) -> dict:
     """Map the flat answers onto the nested config/profile.yml schema. function.*
-    is auto-derived from target_roles (the agent reviews out_of_scope afterward)."""
-    base_city = a["base_city"].strip()
-    city_only = base_city.split(",")[0].strip()
-    roles = [str(r).strip() for r in a["target_roles"] if str(r).strip()]
-    wm = str(a["work_mode"]).lower()
+    is auto-derived from target_roles (the agent reviews out_of_scope afterward).
+
+    Only work_mode + target_roles are guaranteed by validate_answers; every other
+    field is filled here with a safe, doctor-ready fallback (non-empty name / city
+    / ceiling) so a minimal 'answered work-mode + relocate only' run still writes a
+    valid profile."""
+    roles = [str(r).strip() for r in (a.get("target_roles") or []) if str(r).strip()]
+    wm = str(a.get("work_mode") or "mix").lower()
     onsite = [str(c).strip() for c in (a.get("onsite_cities") or []) if str(c).strip()]
+    email = (a.get("email") or "").strip()
+    full_name = ((a.get("full_name") or "").strip()
+                 or (email.split("@")[0] if email else "") or "Candidate")
+    base_city = (a.get("base_city") or "").strip()
+    city_only = base_city.split(",")[0].strip()
     if wm == "onsite":
         remote_ok, hybrid_ok = False, False
     else:                                    # remote / hybrid / mix
         remote_ok, hybrid_ok = True, True
-        onsite = onsite or [city_only]
+        onsite = onsite or ([city_only] if city_only else [])
+    base_city = base_city or (onsite[0] if onsite else "India")
     return {
-        "candidate": {"full_name": a["full_name"].strip(), "location": base_city,
-                      "email": (a.get("email") or "").strip()},
-        "seniority": {"years_total": _num(a["years_total"]),
-                      "years_in_function": _num(a["years_in_function"]),
+        "candidate": {"full_name": full_name, "location": base_city, "email": email},
+        "seniority": {"years_total": _num(a.get("years_total")),
+                      "years_in_function": _num(a.get("years_in_function")),
                       "current_title": (a.get("current_title") or "").strip(),
-                      "honest_ceiling": str(a["honest_ceiling"]).lower(),
+                      "honest_ceiling": str(a.get("honest_ceiling") or "mid").lower(),
                       "honest_ceiling_ic": str(a.get("honest_ceiling_ic") or "mid").lower()},
         "function": {"actual": a.get("function_actual")
                      or ("Delivery / implementation / program management across: " + ", ".join(roles[:3])),
@@ -158,7 +171,7 @@ def _answers_to_profile(a: dict) -> dict:
         "domains": {"strong": a.get("domains_strong") or [], "open_to": a.get("domains_open_to") or []},
         "compensation": {"current_ctc_lpa": _num(a.get("current_ctc_lpa")),
                          "target_ctc_lpa": _num(a.get("target_ctc_lpa")),
-                         "floor_ctc_lpa": _num(a["floor_ctc_lpa"]),
+                         "floor_ctc_lpa": _num(a.get("floor_ctc_lpa")),
                          "currency": (a.get("currency") or "INR")},
         "location": {"base_city": base_city, "remote_ok": remote_ok, "hybrid_ok": hybrid_ok,
                      "onsite_cities": onsite,
@@ -262,6 +275,109 @@ def _split(s: str) -> list[str]:
     return [x.strip() for x in (s or "").split(",") if x.strip()]
 
 
+# ── Best-effort résumé field derivation (deterministic, never raises) ────────
+# Minimise compulsory input: parse what the résumé already states and present it
+# as an editable DEFAULT (Enter accepts). Anything we can't derive degrades to an
+# OPTIONAL prompt — never a hard block. Only work-mode + relocate are asked fresh.
+_ROLE_KEYWORDS = (
+    "manager", "engineer", "analyst", "lead", "developer", "consultant", "designer",
+    "architect", "scientist", "specialist", "coordinator", "director", "head", "officer",
+    "associate", "product", "program", "project", "strategist", "administrator", "executive",
+    "founder", "marketer", "recruiter", "accountant", "operations", "delivery", "scrum",
+    "devops", "sre",
+)
+_INDIAN_CITIES = (
+    "Bengaluru", "Bangalore", "Hyderabad", "Pune", "Mumbai", "New Delhi", "Delhi", "Gurugram",
+    "Gurgaon", "Noida", "Chennai", "Kolkata", "Ahmedabad", "Jaipur", "Kochi", "Cochin",
+    "Chandigarh", "Indore", "Coimbatore", "Thiruvananthapuram", "Trivandrum", "Nagpur",
+    "Vadodara", "Bhubaneswar", "Mysuru", "Mysore",
+)
+_NAME_BLOCK = {"curriculum vitae", "resume", "résumé", "cv", "profile", "summary",
+               "biodata", "bio data", "contact", "objective"}
+
+
+def _ceiling_from_years(years) -> str:
+    """A conservative honest-ceiling GUESS from tenure — used only to PRE-SELECT
+    the arrow menu (the user confirms/overrides). People-management levels
+    (Manager/Director) stay an explicit choice: tenure alone never implies them."""
+    y = _num(years)
+    if y is None:
+        return "Mid"
+    if y < 2:
+        return "Junior"
+    if y < 5:
+        return "Mid"
+    if y < 9:
+        return "Senior"
+    return "Lead"
+
+
+def _parse_resume_fields(text: str) -> dict:
+    """Return any of {full_name, email, base_city, years_total, target_roles} the
+    résumé states, best-effort. Deterministic and defensive — any parse quirk just
+    yields fewer keys, never an exception (onboarding must not break on a résumé)."""
+    out: dict = {}
+    try:
+        lines = [ln.strip() for ln in (text or "").splitlines()]
+        nonempty = [ln for ln in lines if ln]
+        head = nonempty[:12]
+
+        m = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", text or "")
+        if m:
+            out["email"] = m.group(0)
+
+        for ln in head[:5]:                      # name: a header line shaped like a person's name
+            toks = ln.split()
+            if (2 <= len(toks) <= 4 and "@" not in ln and len(ln) <= 40
+                    and ln.lower() not in _NAME_BLOCK
+                    and not any(ch.isdigit() for ch in ln)
+                    and all(t[:1].isalpha() for t in toks)
+                    and not any(k in ln.lower() for k in _ROLE_KEYWORDS)):
+                out["full_name"] = ln
+                break
+
+        for ln in head:                          # base_city: header line naming a known Indian city
+            for c in _INDIAN_CITIES:
+                if re.search(rf"\b{re.escape(c)}\b", ln, re.I):
+                    out["base_city"] = f"{c}, India"
+                    break
+            if "base_city" in out:
+                break
+
+        yr = r"(?:19[89]\d|20[0-4]\d)"           # years_total: span of work-history date RANGES
+        ranges = re.findall(rf"({yr})\s*(?:-|–|—|to)\s*({yr}|present|current|now)", text or "", re.I)
+        starts = [int(a) for a, _ in ranges]
+        ends = [datetime.date.today().year if not b.isdigit() else int(b) for _, b in ranges]
+        allyrs = [int(y) for y in re.findall(rf"\b{yr}\b", text or "")]
+        lo = min(starts) if starts else (min(allyrs) if allyrs else None)
+        hi = max(ends) if ends else (max(allyrs) if allyrs else None)
+        if lo and hi and 0 < hi - lo <= 45:
+            out["years_total"] = hi - lo
+
+        roles: list[str] = []                    # target_roles: recent distinct title-ish lines
+        for ln in nonempty:
+            low = ln.lower()
+            if 3 <= len(ln) <= 60 and "@" not in ln and any(k in low for k in _ROLE_KEYWORDS):
+                title = re.split(r"[|•·—–,@]|\s-\s", ln)[0].strip()
+                if title and title.lower() not in [r.lower() for r in roles]:
+                    roles.append(title)
+            if len(roles) >= 3:
+                break
+        if roles:
+            out["target_roles"] = roles
+    except Exception:                            # noqa: BLE001 — derivation is best-effort, never fatal
+        return out
+    return out
+
+
+def _ask_default(label: str, default: str) -> str:
+    """Editable default: `label [default]:` (Enter accepts, typed text overrides).
+    With no derived default, an OPTIONAL prompt the user may skip with Enter."""
+    if default:
+        return _input(f"{label} [{default}]: ", default)
+    return _input(f"{label} (optional, Enter to skip): ", "")
+
+
 def _select(question: str, choices: list[str], default: str | None = None) -> str:
     """Arrow-key select via questionary if installed; else a plain numbered input() menu."""
     try:
@@ -311,19 +427,48 @@ def _ask_workmode(a: dict) -> None:
 
 def _collect_answers() -> dict:
     a: dict = {}
+    parsed: dict = {}
     if not os.path.exists(os.path.join(ROOT, "resume.md")):
         a.update(_ask_resume())
-    a["full_name"] = _input("Full name: ")
-    a["email"] = _input("Email (optional): ")
-    a["base_city"] = _input("Base city (e.g. 'Hyderabad, India'): ")
-    a["target_roles"] = _split(_input("Target roles (comma-separated): "))
-    a["years_total"] = _num(_input("Years total experience: "))
-    a["years_in_function"] = _num(_input("Years in your target function: "))
-    a["honest_ceiling"] = _select("Honest ceiling (highest level you can credibly claim today):",
-                                  _CEILING_CHOICES, default="Mid").lower()
+        text = a.get("resume_text") or ""
+        if not text and a.get("resume_path"):
+            try:
+                text = load_resume(os.path.expanduser(a["resume_path"]))
+            except Exception:            # noqa: BLE001 — best-effort; write_from_answers surfaces real load errors
+                text = ""
+        parsed = _parse_resume_fields(text)
+        if parsed:
+            print("\nRead your résumé — filled in what I could. "
+                  "Press Enter to accept, or type to change:")
+
+    # Derived-with-Enter-accept — never a blank required prompt ──────────────
+    a["full_name"] = _ask_default("Full name", parsed.get("full_name", ""))
+    a["email"] = _ask_default("Email", parsed.get("email", ""))
+    a["base_city"] = _ask_default("Base city", parsed.get("base_city", ""))
+    shown = ", ".join(parsed.get("target_roles") or [])
+    raw = _input(f"Target roles (comma-separated) [{shown}]: " if shown
+                 else "Target roles (comma-separated): ")
+    a["target_roles"] = _split(raw) if raw else list(parsed.get("target_roles") or [])
+    yt = _ask_default("Years of experience",
+                      str(parsed["years_total"]) if parsed.get("years_total") else "")
+    if yt:
+        a["years_total"] = _num(yt)
+    yf = _input("Years in your target function (optional, Enter to skip): ")
+    if yf:
+        a["years_in_function"] = _num(yf)
+    a["honest_ceiling"] = _select(
+        "Honest ceiling (highest level you can credibly claim today):",
+        _CEILING_CHOICES, default=_ceiling_from_years(a.get("years_total"))).lower()
+
+    # The few things a résumé can't decide — the ONLY strictly-required asks ──
+    print("\nNow the few things your résumé can't tell me:")
     _ask_workmode(a)
     a["willing_to_relocate"] = _select("Open to relocating?", ["No", "Yes"], default="No") == "Yes"
-    a["floor_ctc_lpa"] = _num(_input("Comp floor / walk-away (LPA): "))
+
+    # Optional — Enter to skip ───────────────────────────────────────────────
+    floor = _input("Comp floor / walk-away LPA (optional, Enter = no comp filter): ")
+    if floor:
+        a["floor_ctc_lpa"] = _num(floor)
     tgt = _num(_input("Target comp (LPA, optional): "))
     if tgt:
         a["target_ctc_lpa"] = tgt
@@ -334,28 +479,18 @@ def _collect_answers() -> dict:
 
 
 def _refill(a: dict, problems: list[str]) -> None:
-    """Re-ask ONLY the fields named in the validation problems (loop-until-valid)."""
+    """Re-ask ONLY the strictly-required fields the validator can flag
+    (loop-until-valid): the résumé itself, target_roles, and work-mode (+ on-site
+    city). Name / years / ceiling / comp are never required, so never re-asked."""
     t = " ".join(problems).lower()
     if "résumé" in t or "resume" in t:
         a.pop("resume_text", None)
         a.pop("resume_path", None)
         a.update(_ask_resume())
-    if "full_name" in t:
-        a["full_name"] = _input("Full name: ")
-    if "base_city" in t:
-        a["base_city"] = _input("Base city: ")
     if "target_roles" in t:
         a["target_roles"] = _split(_input("Target roles (comma-separated): "))
-    if "years_total" in t:
-        a["years_total"] = _num(_input("Years total experience: "))
-    if "years_in_function" in t:
-        a["years_in_function"] = _num(_input("Years in your target function: "))
-    if "honest_ceiling" in t:
-        a["honest_ceiling"] = _select("Honest ceiling:", _CEILING_CHOICES).lower()
     if "work_mode" in t or "onsite_cities" in t:
         _ask_workmode(a)
-    if "floor_ctc_lpa" in t:
-        a["floor_ctc_lpa"] = _num(_input("Comp floor / walk-away (LPA): "))
 
 
 def _interactive() -> int:
