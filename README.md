@@ -78,26 +78,45 @@ no anonymous proxy scraping** — ever. Channels, in priority order:
 If a channel returns nothing, job-finder says so plainly. It never fabricates a
 result and never silently degrades.
 
-## Quick start
+## Run it inside your own AI CLI (prompt-pack — primary mode)
+
+Open this repo in the AI CLI you already use (**Claude Code / Codex / OpenCode /
+Qwen / Antigravity** — legacy Gemini → Antigravity) and just say **"find me jobs."**
+The CLI reads [`AGENTS.md`](AGENTS.md) (canonical) + [`modes/`](modes/) — entry via
+the skill router [`.agents/skills/job-finder-india/SKILL.md`](.agents/skills/job-finder-india/SKILL.md) —
+and drives the flow: a deterministic cold-start check, conversational onboarding,
+then it calls small Python tools for the plumbing and **scores the bounded set
+in-session with its own model** — no API key held by the app, no headless token.
+(Architecture, UX, and flow mirror [career-ops](https://github.com/santifer/career-ops);
+the India scoring rubric, prescreen cap, and Apify spend-safety are ours.)
+
+```
+your CLI ──reads──► AGENTS.md + modes/{onboarding,evaluate,scan}.md
+        ──calls──►  python -m jobfinder doctor|discover|prescreen|enrich|tracker   (deterministic tools)
+        ──does───►  the honest scoring itself, in-session (prompts/_rubric.md is the law)
+```
+Tools: `doctor --json` (gate) · `discover --json` · `prescreen --json` (the volume cap) ·
+`enrich <job_id>` · `tracker --add -` · `live <job_id>` (posting still active? — adopted
+from career-ops). Outputs: `data/results/top.md` (fit-first) + `data/tracker.md`.
+
+> **Status — multi-LLM verification PENDING.** The pack is built CLI-agnostic
+> (Bash + files) and is validated **in-session on Claude**. It has **not** yet been
+> verified on a non-Claude CLI. To verify: open Codex (or another non-Claude
+> agentic CLI) in this repo, say *"find me jobs,"* and confirm it runs
+> doctor → discover → prescreen → scores in-session with citation-backed JSON.
+
+## Standalone / CI (headless fallback)
 
 ```bash
-git clone https://github.com/harshgarg95/job-finder-india
-cd job-finder-india
-pip install -r requirements.txt          # discovery + resume-parsing deps only
-
-# 1) Setup check — which AI CLIs are installed, which config files exist
-python -m jobfinder doctor
-
-# 2) First-run guided setup (writes resume.md + config; never overwrites your files)
-python -m jobfinder onboard
-
-# 3) Your honest top-N
-python -m jobfinder --resume resume.md --cli claude
+git clone https://github.com/harshgarg95/job-finder-india && cd job-finder-india
+pip install -r requirements.txt
+python -m jobfinder doctor                 # setup check
+python -m jobfinder onboard                # guided setup
+python -m jobfinder --resume resume.md --cli claude   # headless top-N (CI/batch; needs setup-token)
 ```
 
-You get a ranked top-N with, for each job: an honest 0–5 score, an
-apply/don't-apply call, and the resume-line ↔ JD-requirement citations behind
-it.
+Either way you get a ranked top-N with, for each job: an honest 0–5 score, an
+apply/don't-apply call, and the resume-line ↔ JD-requirement citations behind it.
 
 **Volume safety by design.** Before any LLM call, a deterministic prescreen
 (title / seniority / function / hard-constraints) cuts the candidate set to a

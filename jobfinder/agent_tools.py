@@ -155,5 +155,50 @@ def cmd_tracker(argv: list[str]) -> int:
     return 0
 
 
+def cmd_live(argv: list[str]) -> int:
+    """Liveness check (adopted from career-ops's check-liveness.mjs, lightweight):
+    is a posting still active? Reuses link_resolver.verify_link — ATS soft-404
+    detection + dead/anti-bot/junk classification over plain HTTP (no browser).
+    A false 'expired' is worse than a slow check, so anything inconclusive maps
+    to `unknown` (never dropped), not `expired`."""
+    ap = argparse.ArgumentParser(prog="jobfinder live")
+    ap.add_argument("ref", help="job_id (from prescreened/scored) or a full URL")
+    a = ap.parse_args(argv)
+    from .discovery.link_resolver import verify_link
+
+    url, company, title = a.ref, "", ""
+    if not a.ref.lower().startswith("http"):
+        found = None
+        for fn in ("prescreened.jsonl", "scored.jsonl"):
+            p = os.path.join(RESULTS, fn)
+            if not os.path.exists(p):
+                continue
+            for ln in open(p, encoding="utf-8"):
+                if not ln.strip():
+                    continue
+                d = json.loads(ln)
+                if a.ref in (d.get("job_id"), d.get("id")):
+                    found = d
+                    break
+            if found:
+                break
+        if not found:
+            print(json.dumps({"error": f"job_id {a.ref} not found; pass a URL instead"}))
+            return 1
+        url, company, title = found.get("url", ""), found.get("company", ""), found.get("title", "")
+
+    res = verify_link(url, company, title)
+    mapping = {"ok": "active", "trusted-blocked": "active",
+               "dead": "expired", "junk": "expired",
+               "unreachable": "unknown", "unverified": "unknown", "none": "unknown"}
+    print(json.dumps({
+        "url": url, "liveness": mapping.get(res.status, "unknown"),
+        "status": res.status, "source": res.source, "verified": res.verified,
+        "final_url": res.final_url,
+        "note": "inconclusive → unknown (a false 'expired' would make you miss a real job)",
+    }, ensure_ascii=False, indent=2))
+    return 0
+
+
 HANDLERS = {"discover": cmd_discover, "prescreen": cmd_prescreen,
-            "enrich": cmd_enrich, "tracker": cmd_tracker}
+            "enrich": cmd_enrich, "tracker": cmd_tracker, "live": cmd_live}

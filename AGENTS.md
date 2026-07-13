@@ -1,15 +1,24 @@
 # job-finder-india — agent instructions (canonical)
 
-You are operating **job-finder-india** from inside the user's own AI CLI (Claude
-Code, Gemini CLI, Codex, OpenCode, …). You — the host model — do the *judgement*
-(onboarding conversation + honest scoring); small **Python tools** do the
-deterministic plumbing (discovery, prescreen, dedup, tracker). There is **no
-headless model call** and no API key in this app: scoring happens **in your
-session**, with whatever model the user already opened.
+You are operating **job-finder-india** from inside the user's own AI CLI. You —
+the host model — do the *judgement* (onboarding conversation + honest scoring);
+small **Python tools** do the deterministic plumbing (discovery, prescreen, dedup,
+tracker, liveness). There is **no headless model call** and no API key in this
+app: scoring happens **in your session**, with whatever model the user opened.
 
-> `CLAUDE.md` / `GEMINI.md` / `OPENCODE.md` are thin wrappers that point here.
-> A separate `python -m jobfinder --resume … --cli …` headless path still exists
-> for CI/batch only — do **not** use it for interactive work.
+**Supported CLIs:** Claude Code, Codex, OpenCode, Qwen, Antigravity CLI — any CLI on
+the [open agent skill standard](https://agentskills.io). Legacy Gemini CLI →
+Antigravity. No CLI-specific auth code — login is each CLI's own.
+- Canonical instructions: **this file (`AGENTS.md`)**.
+- `CLAUDE.md` / `OPENCODE.md` are thin `@AGENTS.md` imports; `GEMINI.md` is a no-op stub.
+- Skill entrypoint (router + command center): `.agents/skills/job-finder-india/SKILL.md`
+  (Antigravity pointer: `.antigravitycli/skills/job-finder-india/SKILL.md`).
+- A separate `python -m jobfinder --resume … --cli …` headless path exists for
+  CI/batch only — not for interactive use.
+
+> **Status — multi-LLM verification PENDING.** Validated in-session on Claude only;
+> not yet run on a non-Claude CLI. If a step behaves differently than a mode
+> describes, stop and report rather than guessing.
 
 ## Before anything else — the cold-start gate
 On the first request, run:
@@ -27,6 +36,8 @@ implicit — the user already opened their CLI.)
 | set up / first run / "get started" | `modes/onboarding.md` |
 | find/score jobs → honest top-N | `modes/evaluate.md` |
 | just see discovery coverage (no scoring) | `modes/scan.md` |
+| application status / tracker overview | `modes/tracker.md` |
+| cover letter · CV PDF · interview prep · follow-up · rejection patterns | `modes/{cover,pdf,interview-prep,followup,patterns}.md` — **scaffolded, NOT built yet** (they mirror career-ops's layout for drop-in later; tell the user it's coming, don't fake output) |
 
 Always read `modes/_shared.md` before `evaluate`/`scan` — it loads the scoring law.
 
@@ -39,6 +50,7 @@ Always read `modes/_shared.md` before `evaluate`/`scan` — it loads the scoring
 | `python -m jobfinder prescreen --json` | candidates → `data/results/prescreened.jsonl` (**hard cap** `run.yml: max_llm_jobs`) + funnel |
 | `python -m jobfinder enrich <job_id>` | deep-fetch ONE full JD (its `scoring_view`) for in-session scoring |
 | `echo '<verdict json>' \| python -m jobfinder tracker --add -` | register one scored verdict → `data/tracker.md` + `data/results/top.md` |
+| `python -m jobfinder live <job_id>` | liveness check (adopted from career-ops) — is the posting still active? ATS-API/HTTP rung → reports `active` / `expired` / `unknown` (a false "expired" is worse than slow; inconclusive → `unknown`, not dropped) |
 
 ## Hard rules (do not violate)
 1. **Volume safety.** Score **only** the jobs `prescreen` returns (≤ `max_llm_jobs`).

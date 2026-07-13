@@ -90,6 +90,9 @@ def check() -> dict:
         "ready": has_cli and not missing_required,
         # onboarding is needed if a required file is missing or no CLI at all
         "needs_onboarding": bool(missing_required) or not has_cli,
+        # career-ops-compatible aliases (same gate, their field names)
+        "onboardingNeeded": bool(missing_required) or not has_cli,
+        "missing": missing_required,
     }
 
 

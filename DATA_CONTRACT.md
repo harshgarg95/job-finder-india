@@ -38,7 +38,8 @@ no personal data.
 | File / dir | What it is |
 |---|---|
 | `prompts/*.md` | The scoring rubric and prompts (the CLI-agnostic scoring core). |
-| `jobfinder/**/*.py` | Discovery + orchestration code. |
+| `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `OPENCODE.md`, `modes/*.md`, `.agents/skills/*`, `.antigravitycli/skills/*` | The prompt-pack: canonical agent instructions, per-CLI entry files, modes, and the skill router (the in-CLI scoring flow). |
+| `jobfinder/**/*.py` | Discovery + orchestration code, incl. the agent tool subcommands. |
 | `config/profile.example.yml` | Template you copy to `config/profile.yml`. |
 | `config/sources.example.yml`, `config/run.example.yml`, `config/_profile.example.md` | Templates for the user files above. Onboarding seeds the real files from these. |
 | `config/ats_tenants.india.yml` | The India ATS tenant list scanned by the free channel. |
