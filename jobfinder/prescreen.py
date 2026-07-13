@@ -229,7 +229,8 @@ def _relevance(job: JobPosting, role_rx: list[re.Pattern]) -> float:
 
 
 def prescreen_set(jobs: list[JobPosting], profile: dict,
-                  run_cfg: dict | None = None) -> tuple[list[JobPosting], dict]:
+                  run_cfg: dict | None = None,
+                  preferences: dict | None = None) -> tuple[list[JobPosting], dict]:
     """Cut + rank the candidate set to a bounded, scoreable list.
 
     Returns (kept, report). `kept` is at most `prescreen.max_llm_jobs` jobs,
@@ -250,7 +251,32 @@ def prescreen_set(jobs: list[JobPosting], profile: dict,
         else:
             dropped.append((j, why))
 
-    kept.sort(key=lambda j: (_relevance(j, role_rx), j.posted_at or ""), reverse=True)
+    # ── Preference layer (revealed feedback): drop already-decided jobs, and
+    #    DOWN-RANK established rejected patterns. Soft + logged; never a hidden
+    #    hard filter, never overrides the rubric or the cap. ──
+    dropped_seen, demoted = [], []
+    if preferences:
+        from . import preferences as PF
+        seen = PF.seen_ids(preferences)
+        if seen:
+            keep2 = []
+            for j in kept:
+                if j.id in seen:
+                    dropped_seen.append({"title": j.title, "company": j.company, "job_id": j.id})
+                else:
+                    keep2.append(j)
+            kept = keep2
+    rel = {}
+    for j in kept:
+        pen = 0.0
+        if preferences:
+            hits = PF.negative_hits(j, preferences)
+            if hits:
+                pen = 1.5 * len(hits)                    # small demotion, not a cliff
+                demoted.append({"title": j.title, "company": j.company,
+                                "reasons": [f"{c}:{v}" for c, v in hits], "penalty": round(pen, 1)})
+        rel[j.id] = _relevance(j, role_rx) - pen
+    kept.sort(key=lambda j: (rel.get(j.id, 0.0), j.posted_at or ""), reverse=True)
 
     truncated_from = None
     if len(kept) > cap:
@@ -266,6 +292,8 @@ def prescreen_set(jobs: list[JobPosting], profile: dict,
         "by_reason": dict(Counter(why for _, why in dropped).most_common()),
         "dropped_samples": [{"title": j.title, "company": j.company, "reason": why}
                             for j, why in dropped[:200]],
+        "dropped_seen": dropped_seen,     # already-decided jobs removed (soft, logged)
+        "demoted": demoted,               # look-alikes of rejected patterns, down-ranked
     }
     return kept, report
 

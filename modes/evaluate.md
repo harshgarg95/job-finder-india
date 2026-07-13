@@ -7,7 +7,9 @@ host model) in this session. No headless model call.
 1. **Gate.** `python -m jobfinder doctor --json`. If `needs_onboarding` → go to
    `modes/onboarding.md` and stop.
 2. **Load the law.** Read `modes/_shared.md` (→ `prompts/_rubric.md` + `score-job.md`),
-   then `resume.md` and `config/profile.yml` (+ `config/_profile.md`).
+   then `resume.md` and `config/profile.yml` (+ `config/_profile.md`). Also run
+   `python -m jobfinder preferences --context` and hold that block as a **tie-breaker
+   for BORDERLINE (≈3.5–4.2) calls only** — it never overrides the rubric or a hard gate.
 3. **Discover.** `python -m jobfinder discover --json`. Report the funnel + channel
    states (Apify auto-pauses on no credits — that's expected; ATS-only is fine).
 4. **Prescreen (the cap).** `python -m jobfinder prescreen --json`. This returns the
@@ -31,6 +33,26 @@ host model) in this session. No headless model call.
    >   **3.** Adjust target roles / filters (`config/profile.yml`) and re-run
    >   **4.** Check whether a posting is still live (`python -m jobfinder live <job_id>`)
    >   **5.** Done `← (default)`
+8. **Review & learn (feedback loop).** For each shown job, offer a numbered mark
+   (per the `_shared.md` choice convention):
+   > Mark this one? Reply with a number:
+   >   **1.** Applied   **2.** Interested   **3.** Not suitable   **4.** Skip `← (default)`
+
+   If **3 (Not suitable)**, ask the reason:
+   >   **1.** Too senior   **2.** Wrong function   **3.** Location   **4.** Comp   **5.** Company   **6.** Other
+
+   Store each (Skip records nothing) — pass the job's fields so the preference layer can learn:
+   ```bash
+   python -m jobfinder feedback --job <job_id> --action <action> --company "<c>" --title "<t>" --url "<u>" --note "<optional>"
+   ```
+   Action map: 1→`applied` · 2→`interested` · 3+reason→`wrong_level`/`wrong_function`/
+   `wrong_location`/`wrong_comp`/`wrong_company` · 3+Other→`wouldnt_apply`.
+   Then rebuild the preference layer: `python -m jobfinder preferences --refresh`.
+   Next run's prescreen drops already-decided jobs and **down-ranks** (never hides)
+   repeat-rejected patterns — logged — and the refreshed context tilts borderline
+   scores. **The rubric never changes.** Undo a mis-mark:
+   `python -m jobfinder feedback --job <id> --undo`; reset all learning:
+   `python -m jobfinder preferences --clear`.
 
 ## NEVER
 - Score, discover, or enrich anything outside `prescreened.jsonl`.

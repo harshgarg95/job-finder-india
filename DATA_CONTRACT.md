@@ -23,6 +23,7 @@ text itself to a discovery channel **you** explicitly enabled.
 | `config/sources.yml` | Which discovery channels you turned on (ATS / Google Jobs / Apify) and their settings. |
 | `config/run.yml` | Your run knobs — the `prescreen.max_llm_jobs` volume cap, scoring samples, top-N. |
 | `config/_profile.md` | Your narrative profile (archetypes, superpower, deal-breakers) from onboarding Step 5. |
+| `config/preferences.yml` | Revealed-preference layer, **derived** from your feedback (rejected/liked patterns). Machine-maintained; rebuild/clear anytime. Never edits the rubric. |
 | `data/results/*` | Your scored job results and ranked top-N. |
 | `data/tracker.md` | Your single-source-of-truth tracker — every job ever scored, with score, verdict, and citation summary. |
 | `data/feedback.md` / `data/feedback.jsonl` | Your scoring corrections ("wouldn't apply", "wrong level/location/domain"). The memory the feedback loop learns from + replays into scoring. Written by the local dashboard or `jobfinder feedback`. |
@@ -41,7 +42,7 @@ no personal data.
 | `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `OPENCODE.md`, `modes/*.md`, `.agents/skills/*`, `.antigravitycli/skills/*` | The prompt-pack: canonical agent instructions, per-CLI entry files, modes, and the skill router (the in-CLI scoring flow). |
 | `jobfinder/**/*.py` | Discovery + orchestration code, incl. the agent tool subcommands. |
 | `config/profile.example.yml` | Template you copy to `config/profile.yml`. |
-| `config/sources.example.yml`, `config/run.example.yml`, `config/_profile.example.md` | Templates for the user files above. Onboarding seeds the real files from these. |
+| `config/sources.example.yml`, `config/run.example.yml`, `config/_profile.example.md`, `config/preferences.example.yml` | Templates / schema references for the user files above. Onboarding seeds the real files from these. |
 | `config/ats_tenants.india.yml` | The India ATS tenant list scanned by the free channel. |
 | `dashboard/*` | The local tracker UI. |
 | `README.md`, `DATA_CONTRACT.md`, `LICENSE`, `docs/*` | Documentation. |

@@ -1,0 +1,33 @@
+# config/preferences.example.yml — the revealed-preference layer (schema reference).
+#
+# The REAL file, config/preferences.yml, is DERIVED from data/feedback.jsonl and is
+# machine-maintained (User Layer, gitignored). Do not hand-edit it — rebuild with
+# `python -m jobfinder preferences --refresh`, inspect with `--show`, wipe with
+# `--clear`. It NEVER changes prompts/_rubric.md; it only (a) lets prescreen
+# down-rank / drop repeat-rejected patterns (soft, logged, cap-respecting) and
+# (b) adds a short tie-breaker context block to in-session scoring for BORDERLINE
+# calls. A negative value must recur ≥ established_threshold to affect look-alikes.
+
+updated: "2026-07-04"
+established_threshold: 2
+
+negative:              # repeatedly-rejected patterns → down-rank similar jobs
+  functions:           # from "Not suitable → Wrong function" (+ generic "Wouldn't apply")
+    - { value: "customer success", count: 3, tokens: ["customer", "success"] }
+  companies:           # from "Not suitable → Company"
+    - { value: "example-corp", count: 2 }
+  locations:           # from "Not suitable → Location" (region tokens from the tracker)
+    - { value: "colombia", count: 1 }
+  seniority:           # from "Not suitable → Too senior" (level tokens in the title)
+    - { value: "director", count: 1 }
+  comp_floor_hits: 0   # from "Not suitable → Comp" (reinforces your CTC/LPA floor)
+
+positive:              # from "Applied" / "Interested" → lean toward similar jobs
+  functions:
+    - { value: "ai delivery", count: 2 }
+  companies:
+    - { value: "highradius", count: 1 }
+
+seen:                  # exact jobs already decided → not re-surfaced next run
+  applied:  []         # job_ids
+  rejected: []         # job_ids ("Not suitable" any reason, or "Wouldn't apply")

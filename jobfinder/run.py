@@ -179,7 +179,8 @@ def main(argv=None) -> int:
     candidates = keyword_prefilter(candidates, profile, query.titles)
 
     # ── The volume gate: bound the set BEFORE any LLM call ──
-    kept, prep = prescreen_set(candidates, profile, run_cfg)
+    from . import preferences as _pref
+    kept, prep = prescreen_set(candidates, profile, run_cfg, preferences=_pref.load())
 
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, "jobs.jsonl"), "w", encoding="utf-8") as f:
@@ -200,6 +201,10 @@ def main(argv=None) -> int:
         print("  top drop reasons:")
         for reason, n in list(prep["by_reason"].items())[:6]:
             print(f"     {n:4d}  {reason}")
+    if prep.get("dropped_seen"):
+        print(f"  preference: dropped {len(prep['dropped_seen'])} already-decided job(s)")
+    if prep.get("demoted"):
+        print(f"  preference: down-ranked {len(prep['demoted'])} look-alike(s) of rejected patterns")
     print(f"  saved -> {os.path.join(args.out, 'prescreened.jsonl')} (+ prescreen_report.json)")
 
     funnel = {"raw": total, "candidates": len(candidates), "prescreened": len(kept),

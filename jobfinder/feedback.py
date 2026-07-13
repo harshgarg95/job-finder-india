@@ -27,15 +27,19 @@ FB_MD = os.path.join(DATA, "feedback.md")
 # that retunes scoring. (Latest choice per job wins — see _latest().)
 ACTIONS = {
     "applied":        ("Applied", True),          # you applied → tracked application
+    "interested":     ("Interested", False),      # POSITIVE signal; STAYS visible (non-suppressing)
     "wouldnt_apply":  ("Wouldn't apply", True),   # passed, no specific reason
-    "wrong_location": ("Wrong location", True),   # ── reasons for "wouldn't apply" ──
+    "wrong_location": ("Wrong location", True),   # ── reasons for "not suitable" ──
     "wrong_level":    ("Wrong seniority", True),
     "wrong_function": ("Wrong function", True),
     "wrong_domain":   ("Wrong domain", True),
     "wrong_comp":     ("Comp too low", True),
+    "wrong_company":  ("Company (pass)", True),    # reject this company
 }
 TRACKED = {"applied"}                              # actions that = a tracked application
-REASONS = ("wrong_location", "wrong_level", "wrong_function", "wrong_domain", "wrong_comp")
+POSITIVE = {"applied", "interested"}               # actions that are a POSITIVE signal
+REASONS = ("wrong_location", "wrong_level", "wrong_function", "wrong_domain",
+           "wrong_comp", "wrong_company")
 
 
 def _latest(entries: list[dict]) -> list[dict]:
@@ -138,7 +142,9 @@ def lessons_digest(entries: list[dict] | None = None, limit: int = 40) -> str:
         "wrong_function": "Treat this function as out-of-scope going forward.",
         "wrong_domain":   "Weight the domain gap heavily for similar roles.",
         "wrong_comp":     "Respect the comp floor strictly for similar roles.",
+        "wrong_company":  "The user rejected this company — down-rank it and its similar postings.",
         "wouldnt_apply":  "The user passed on these despite the score — down-rank similar roles.",
+        "interested":     "The user is interested — a positive signal; favor similar roles.",
         "applied":        "The user APPLIED to these — confirmed-good fit; favor similar roles.",
     }
     lines = ["## PRIOR USER CORRECTIONS — binding lessons (apply on this run)",

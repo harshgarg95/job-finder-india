@@ -21,6 +21,8 @@ import json
 import os
 import sys
 
+import yaml
+
 from . import run as R
 from .dedup import dedupe
 from .discovery import apify
@@ -84,7 +86,9 @@ def cmd_prescreen(argv: list[str]) -> int:
         print(json.dumps({"error": "candidates.jsonl missing — run `discover` first"}))
         return 1
     cand = [JobPosting.from_dict(json.loads(l)) for l in open(cpath, encoding="utf-8") if l.strip()]
-    kept, rep = prescreen_set(cand, profile, run_cfg)
+    from . import preferences as PF
+    prefs = PF.load()                        # revealed-preference layer (empty until feedback)
+    kept, rep = prescreen_set(cand, profile, run_cfg, preferences=prefs)
     ppath = os.path.join(RESULTS, "prescreened.jsonl")
     with open(ppath, "w", encoding="utf-8") as f:
         for j in kept:
@@ -97,9 +101,54 @@ def cmd_prescreen(argv: list[str]) -> int:
     print(json.dumps({
         "input": rep["input"], "kept": rep["kept"], "cap": rep["cap"],
         "truncated_from": rep["truncated_from"], "by_reason": rep["by_reason"],
+        "preferences_applied": bool(prefs),
+        "dropped_seen": len(rep.get("dropped_seen", [])),
+        "demoted": rep.get("demoted", []),
         "prescreened_path": ppath, "jobs": jobs,
         "RULE": f"Score ONLY these {len(jobs)} jobs in-session. Never discover or score beyond this set.",
     }, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_preferences(argv: list[str]) -> int:
+    """Inspect / rebuild / clear the revealed-preference layer (config/preferences.yml)."""
+    ap = argparse.ArgumentParser(prog="jobfinder preferences")
+    ap.add_argument("--refresh", action="store_true", help="rebuild from data/feedback.jsonl")
+    ap.add_argument("--show", action="store_true", help="print current preferences (default)")
+    ap.add_argument("--context", action="store_true", help="print the scoring preference-context block")
+    ap.add_argument("--clear", action="store_true", help="wipe the derived layer (feedback kept)")
+    ap.add_argument("--clear-feedback", action="store_true",
+                    help="also wipe raw data/feedback.* (a hard reset)")
+    a = ap.parse_args(argv)
+    from . import preferences as PF, feedback as FB
+
+    if a.clear or a.clear_feedback:
+        PF.clear()
+        out = {"cleared": "config/preferences.yml"}
+        if a.clear_feedback:
+            for p in (FB.FB_JSONL, FB.FB_MD):
+                try:
+                    os.remove(p)
+                except FileNotFoundError:
+                    pass
+            out["cleared_feedback"] = True
+        print(json.dumps(out))
+        return 0
+    if a.refresh:
+        prefs = PF.refresh()
+        print(json.dumps({"refreshed": True, "updated": prefs.get("updated"),
+                          "seen": {k: len(v) for k, v in (prefs.get("seen") or {}).items()},
+                          "negative": {k: (len(v) if isinstance(v, list) else v)
+                                       for k, v in (prefs.get("negative") or {}).items()}}))
+        return 0
+    if a.context:
+        print(PF.context() or "(no established preferences yet)")
+        return 0
+    prefs = PF.load()
+    if not prefs:
+        print("(no preferences yet — mark some results, then run `preferences --refresh`)")
+        return 0
+    print(yaml.safe_dump(prefs, sort_keys=False, allow_unicode=True))
     return 0
 
 
@@ -201,4 +250,5 @@ def cmd_live(argv: list[str]) -> int:
 
 
 HANDLERS = {"discover": cmd_discover, "prescreen": cmd_prescreen,
-            "enrich": cmd_enrich, "tracker": cmd_tracker, "live": cmd_live}
+            "enrich": cmd_enrich, "tracker": cmd_tracker, "live": cmd_live,
+            "preferences": cmd_preferences}

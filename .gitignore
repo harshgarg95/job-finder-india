@@ -9,6 +9,7 @@ config/profile.yml
 config/sources.yml
 config/run.yml
 config/_profile.md
+config/preferences.yml
 data/*
 !data/.gitkeep
 resume.txt
