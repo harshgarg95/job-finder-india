@@ -12,7 +12,12 @@ or to sanity-check channel/credit state. This mode never scores.
    - `input → kept` (the **hard cap** from `run.yml: max_llm_jobs`, and `truncated_from`
      if the cap bit), plus the top drop reasons (`by_reason`).
 4. **Present coverage.** Summarize how many India-eligible candidates surfaced and the
-   bounded set size. Offer: *"say 'find me jobs' to score these in-session."*
+   bounded set size, then **offer next actions** (numbered, per the `_shared.md` convention):
+   > What next? Reply with a number:
+   >   **1.** Score these now → evaluate `← (default)`
+   >   **2.** Re-run with Apify enabled for more India boards (needs `APIFY_TOKEN`)
+   >   **3.** Adjust target roles / filters (`config/profile.yml`) and re-scan
+   >   **4.** Done
 
 ## NEVER
 - Score, enrich-for-scoring, or call any model here. Discovery + prescreen only.

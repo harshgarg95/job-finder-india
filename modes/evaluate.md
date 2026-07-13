@@ -24,6 +24,13 @@ host model) in this session. No headless model call.
    - Persist each verdict as you go (crash-safe; the tracker upserts by `job_id`).
 6. **Present.** Show `data/results/top.md` — it leads with **APPLY / STRETCH** (full
    detail + citations) and collapses DON'T-APPLY into "Filtered out — and why".
+7. **Offer next actions** (numbered, per the `_shared.md` convention):
+   > What next? Reply with a number:
+   >   **1.** Open the full report (`data/results/top.md`)
+   >   **2.** Re-run with Apify enabled for more India boards (needs `APIFY_TOKEN`)
+   >   **3.** Adjust target roles / filters (`config/profile.yml`) and re-run
+   >   **4.** Check whether a posting is still live (`python -m jobfinder live <job_id>`)
+   >   **5.** Done `← (default)`
 
 ## NEVER
 - Score, discover, or enrich anything outside `prescreened.jsonl`.

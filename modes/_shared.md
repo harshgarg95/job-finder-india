@@ -4,6 +4,13 @@ Read these two files in full; they are the engine and they do not change:
 - **`prompts/_rubric.md`** — the honest-fit rubric (THE law).
 - **`prompts/score-job.md`** — the exact JSON object you must emit per job.
 
+## Presenting choices (UX convention — follow in EVERY mode)
+Whenever you ask the user to decide, present a **numbered list**, mark the default
+`← (default)`, and end with: *"Reply with the number (or just tell me)."* Free-text
+always works too. After producing results, offer **numbered next-actions** the same
+way. Keep it plain text you print — no CLI-specific buttons/widgets (portable across
+Claude / Codex / OpenCode / Qwen / Antigravity).
+
 ## The candidate (read once per session)
 - `resume.md` — the résumé (full text).
 - `config/profile.yml` — `[GATE]` truth: seniority ceiling + years-in-function,

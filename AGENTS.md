@@ -41,6 +41,21 @@ implicit — the user already opened their CLI.)
 
 Always read `modes/_shared.md` before `evaluate`/`scan` — it loads the scoring law.
 
+## Command center — show this whenever the user is ambiguous or just started
+Print this numbered menu and tell them to reply with a number (free text also works;
+see the choice convention in `modes/_shared.md`):
+```
+job-finder-india — what would you like to do? Reply with a number:
+  1. Find jobs        — discover → prescreen → score → honest top-N
+  2. Scan coverage    — see what's out there (no scoring, no cost)
+  3. Re-run last      — re-score / refresh the last prescreened set
+  4. Onboarding / Setup
+  5. Help             — what each option does
+```
+Routing: **1** → `modes/evaluate.md` · **2** → `modes/scan.md` · **3** → re-run
+`evaluate` on the existing `data/results/prescreened.jsonl` · **4** →
+`modes/onboarding.md` · **5** → explain the options, then show this menu again.
+
 ## The deterministic tool surface (call via Bash)
 | Tool | Does |
 |---|---|

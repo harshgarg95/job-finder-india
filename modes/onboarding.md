@@ -1,41 +1,58 @@
-# onboarding — first-run setup (conversational, 3 steps)
+# onboarding — first-run setup (conversational, numbered options)
 
 Enter this when `python -m jobfinder doctor --json` reports `needs_onboarding: true`.
 Refuse `evaluate` / `scan` until `resume.md` + `config/profile.yml` +
 `config/sources.yml` exist. **LLM choice + login are implicit** — the user already
-opened their own CLI, so do NOT ask which model or for any API key/token.
+opened their own CLI, so never ask which model or for an API key/token.
 
-Be conversational. Never invent data — ask. Never overwrite a user file without
-saying so; for a fresh setup, seed templates first:
-```bash
-python -m jobfinder onboard --seed     # copies any MISSING config/*.example.* into place
-```
+Follow the **choice convention** in `modes/_shared.md`: every decision is a
+**numbered list**, the default is marked `← (default)`, and you end with *"Reply
+with the number (or just tell me)."* Free-text answers always work too. Seed any
+missing config first: `python -m jobfinder onboard --seed`.
 
 ## Step 1 — Résumé → `resume.md`
-Ask for a file path or pasted text.
-- Path: `python -m jobfinder onboard --resume-from <path>` (parses pdf/docx/md/txt; refuses to overwrite an existing `resume.md`).
-- Pasted: write it to `resume.md` yourself (plain text), only if `resume.md` doesn't already exist.
+Ask, verbatim shape:
+> How would you like to give me your résumé? Reply with a number:
+>   **1.** Paste the résumé text here
+>   **2.** Give me a file path (`.pdf` / `.docx` / `.md` / `.txt`)
+>   **3.** Paste your LinkedIn profile URL
+>   **4.** Just describe your experience and I'll draft it
+
+- **1 / 4** → write `resume.md` yourself from what they paste/say (only if it doesn't exist).
+- **2** → `python -m jobfinder onboard --resume-from <path>` (parses pdf/docx/md/txt; never overwrites).
+- **3** → ask them to paste the profile text (we don't scrape); draft `resume.md` from it.
 Confirm it parsed (non-trivial length).
 
 ## Step 2 — Profile → `config/profile.yml`
-Capture conversationally, then write the `[GATE]` fields the scorer/prescreen rely on:
-- name, email, **location + timezone**, base city;
-- **target roles / archetypes** (what they want; primary vs stretch);
-- seniority truth: years_total, **years_in_function**, honest ceiling;
-- **comp (India): target CTC/LPA, floor (walk-away), notice period**;
-- **work-mode — ask explicitly: remote / hybrid / on-site?** plus *which city if on-site* and *open to relocating?* Map the answer onto:
-  `location.remote_ok`, `location.hybrid_ok`, `location.onsite_cities`, `location.willing_to_relocate`.
-  (These drive the prescreen hard-constraint gate and rubric Dimension 5 — e.g. on-site-Hyderabad-only means non-Hyderabad on-site roles are dropped, but India-remote is kept.)
-- hard constraints (work-auth, must-not-relocate, no-PhD, etc.).
-Edit `config/profile.yml` in place (it was seeded from the example). Show the user the filled values and confirm.
+Free-text fields (show an example), numbered lists for the constrained ones:
+- **Name & email** — free text.
+- **Location, base city, timezone** — free text (e.g. *"Hyderabad, India · IST"*).
+- **Target roles / archetypes** — free text (e.g. *"AI Delivery Manager, TPM–AI, AI PM"*).
+- **Seniority** — years total, years in the target function, honest ceiling — free text.
+- **Comp (India)** — target CTC/LPA, floor (walk-away), notice — free text (e.g. *"target 28, floor 20, 60-day notice"*).
+- **Work-mode** — Reply with a number:
+  >   **1.** Remote   **2.** Hybrid   **3.** On-site   **4.** Open to a mix `← (default)`
+
+  If **2** or **3**: ask *"Which city/cities for on-site/hybrid?"* (free text).
+- **Open to relocating?** — Reply with a number:
+  >   **1.** Yes   **2.** No `← (default)`
+- **Hard constraints** (work-auth, no-PhD, must-be-X) — free text.
+
+Map **work-mode + relocate** onto `location.remote_ok` / `hybrid_ok` /
+`onsite_cities` / `willing_to_relocate` (the fields the prescreen hard-gate and
+rubric Dimension 5 consume). Write `config/profile.yml`, show the filled values, confirm.
 
 ## Step 3 — Sources → `config/sources.yml`
-- **ATS scan: on by default** (free, keyless — greenhouse/lever/ashby/workable/workday/smartrecruiters + the curated India list).
-- **Apify: optional.** If they have an Apify token, they add `APIFY_TOKEN` to `.env` and set `apify.enabled: true`; it is probe-gated and auto-pauses on no credits. Otherwise skip — coverage is just reduced, never broken.
-- Google Jobs: optional (needs a SerpAPI/Serper key); off by default.
-- *(Optional)* narrative `config/_profile.md` (superpower, what excites/drains, deal-breakers) for scoring nuance.
+- **ATS scan** is ON by default (free, keyless) — no action needed; just say so.
+- **Apify** (optional India boards — Naukri/LinkedIn/Indeed) — Reply with a number:
+  >   **1.** Add my Apify token (you paste it into `.env`; probe-gated, auto-pauses on no credits)
+  >   **2.** Skip — free ATS scan only `← (default)`
+- **Google Jobs** (optional; needs a SerpAPI/Serper key) — Reply with a number:
+  >   **1.** Enable (add the key to `.env`)   **2.** Skip `← (default)`
+- **Narrative profile** `config/_profile.md` (superpower, deal-breakers — sharpens scoring) — Reply with a number:
+  >   **1.** Add a few notes now   **2.** Skip for now `← (default)`
 
 ## Finish
-Run `python -m jobfinder doctor --json` again to confirm `ready: true`, then tell the
-user they can say **"find me jobs"** (→ `modes/evaluate.md`) or **"show coverage"**
-(→ `modes/scan.md`). Credentials are never collected or printed; `.env` stays theirs.
+Run `python -m jobfinder doctor --json` to confirm `ready: true`, then show the
+**command center** (the numbered menu in `AGENTS.md`) and tell them to reply with a
+number. Credentials are never collected or printed; `.env` stays theirs.
