@@ -1,0 +1,49 @@
+# India company coverage list (System Layer — curated, safe to update).
+#
+# Each entry was AUTO-DETECTED (careers URL resolved to an ATS) and then VERIFIED
+# (the public, keyless endpoint actually returned jobs) on 2026-06-18. Slugs that
+# could not be verified are NOT written here — they are listed under `unresolved:`
+# with the reason. Free path only: no keys, no auth, no anti-bot bypass.
+#
+# Workday entries carry host + site (the CXS endpoint is
+# https://{host}/wday/cxs/{slug}/{site}/jobs). Others need only {ats, slug}.
+
+companies:
+  # ── Workday (public CXS, keyless) ──────────────────────────────────────────
+  - { company: "Genpact",       ats: workday, slug: genpact,  host: "genpact.wd108.myworkdayjobs.com",  site: "External_Careers", limit: 150, india_hq: true }   # 2000 total, India-heavy
+  - { company: "Accenture",     ats: workday, slug: accenture, host: "accenture.wd103.myworkdayjobs.com", site: "AccentureCareers", limit: 150 }                   # 2000 total
+  - { company: "Fractal Analytics", ats: workday, slug: fractal, host: "fractal.wd1.myworkdayjobs.com",  site: "Careers", india_hq: true }                          # 122 total
+  - { company: "Uniphore",      ats: workday, slug: uniphore, host: "uniphore.wd503.myworkdayjobs.com", site: "Uniphore", india_hq: true }                          # 40 total
+
+  # ── Greenhouse / Ashby / Lever / SmartRecruiters (public, keyless) ──────────
+  - { company: "Freshworks",    ats: smartrecruiters, slug: Freshworks, india_hq: true }   # 101 postings
+  - { company: "Postman",       ats: greenhouse, slug: postman }
+  - { company: "PhonePe",       ats: greenhouse, slug: phonepe, india_hq: true }
+  - { company: "Observe.AI",    ats: greenhouse, slug: observeai, india_hq: true }
+  - { company: "Tiger Analytics", ats: ashby,    slug: tiger, india_hq: true }
+  - { company: "Sarvam AI",     ats: ashby,      slug: sarvam, india_hq: true }
+  - { company: "Meesho",        ats: lever,      slug: meesho, india_hq: true }
+
+# Could NOT be verified on the free per-tenant route → deliberately NOT scanned
+# (never write an unverified slug). Reasons captured for transparency.
+unresolved:
+  # SuccessFactors backend detected, but no public/keyless job route (sitemap is
+  # corporate-only; the job API sits behind the career-site domain w/ auth/anti-bot).
+  - { company: "Capgemini",     detected: successfactors, reason: "no public free route (auth/anti-bot)" }
+  - { company: "PwC India",     detected: successfactors, reason: "no public free route (auth/anti-bot)" }
+  - { company: "EY India",      detected: successfactors, reason: "no public free route (auth/anti-bot)" }
+  - { company: "LTIMindtree",   detected: successfactors, reason: "no public free route (auth/anti-bot)" }
+  # No public ATS signature in careers HTML (JS-rendered SPA / custom portal).
+  - { company: "Deloitte",      detected: none, reason: "JS SPA / custom careers portal" }
+  - { company: "Cognizant",     detected: none, reason: "JS SPA / custom careers portal" }
+  - { company: "IBM",           detected: none, reason: "JS SPA / custom careers portal" }
+  - { company: "KPMG India",    detected: none, reason: "JS SPA / custom careers portal" }
+  - { company: "Tech Mahindra", detected: none, reason: "JS SPA / custom careers portal" }
+  - { company: "Tredence",      detected: none, reason: "JS SPA / custom careers portal" }
+  - { company: "LatentView",    detected: none, reason: "JS SPA / custom careers portal" }
+  - { company: "Mu Sigma",      detected: none, reason: "JS SPA / custom careers portal" }
+  - { company: "Razorpay",      detected: none, reason: "no public ATS signature found" }
+  - { company: "Swiggy",        detected: none, reason: "no public ATS signature found" }
+  - { company: "Flipkart",      detected: none, reason: "no public ATS signature found" }
+  - { company: "Yellow.ai",     detected: none, reason: "no public ATS signature found" }
+  - { company: "Gupshup",       detected: none, reason: "no public ATS signature found" }

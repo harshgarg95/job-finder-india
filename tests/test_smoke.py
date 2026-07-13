@@ -229,6 +229,25 @@ def test_feedback_rejects_unknown_action():
         pass
 
 
+def test_workday_and_smartrecruiters_mappers_no_io():
+    from jobfinder.discovery import ats as A
+    # Workday CXS jobPostings -> JobPosting (public keyless shape, verified live)
+    A._post_json = lambda url, body: ({"total": 1, "jobPostings": [
+        {"title": "AI Delivery Manager", "externalPath": "/job/Hyderabad/AI_JR1",
+         "locationsText": "Hyderabad, India"}]} if body.get("offset", 0) == 0 else {"jobPostings": []})
+    wj = A.fetch_workday("genpact", "Genpact", "genpact.wd108.myworkdayjobs.com", "External_Careers", limit=20)
+    assert wj and wj[0].title == "AI Delivery Manager" and wj[0].source == "ats:workday"
+    assert wj[0].url == "https://genpact.wd108.myworkdayjobs.com/External_Careers/job/Hyderabad/AI_JR1"
+    assert "Hyderabad" in wj[0].location
+    # SmartRecruiters postings -> JobPosting
+    A._get_json = lambda url: ({"totalFound": 1, "content": [
+        {"name": "Product Manager", "id": "99", "location": {"city": "Chennai", "country": "in"},
+         "typeOfEmployment": {"label": "Full-time"}}]} if "offset=0" in url else {"content": []})
+    sr = A.fetch_smartrecruiters("Freshworks", "Freshworks", limit=10)
+    assert sr and sr[0].title == "Product Manager" and sr[0].source == "ats:smartrecruiters"
+    assert sr[0].url == "https://jobs.smartrecruiters.com/Freshworks/99" and "Chennai" in sr[0].location
+
+
 def test_build_prompt_contains_rubric_and_inputs():
     j = JobPosting(title="ML Research Engineer", company="DeepCo", source="s", description="train models")
     p = score.build_prompt("RESUME TEXT HERE", PROFILE, j)

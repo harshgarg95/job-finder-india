@@ -311,7 +311,7 @@ def _write_outputs(scored: list[dict], failures: list[dict], out_dir: str, top_n
     def _clean(s) -> str:
         return (str(s or "")).replace("|", "/").replace("\n", " ").strip()
 
-    lines = ["# Honest top results", ""]
+    lines = ["# Honest results — fit first", ""]
     if funnel:
         lines.append(f"**Funnel:** raw {funnel.get('raw','?')} → candidates {funnel.get('candidates','?')} "
                      f"→ prescreened {funnel.get('prescreened','?')} → scored {len(scored)}")
@@ -325,59 +325,74 @@ def _write_outputs(scored: list[dict], failures: list[dict], out_dir: str, top_n
                  f"{n_apply} APPLY · {n_stretch} STRETCH · {n_no} DON'T APPLY{fail_note}{cost_note}")
     lines.append("")
 
-    # Compact ranked table — link is clickable; the full reason is in Details below.
-    lines.append("| # | Score | Verdict | Title | Company | Link |")
-    lines.append("|---|------:|---------|-------|---------|------|")
-    for i, v in enumerate(scored[:top_n], 1):
-        lines.append(f"| {i} | {float(v.get('fit_score',0)):.1f} | {v.get('verdict','')} "
-                     f"| {_clean(v.get('title'))} | {_clean(v.get('company'))} | {_link(v)} |")
-    applies = n_apply + n_stretch
-    if applies < top_n:
-        lines.append("")
-        lines.append(f"> Only {applies} of these clear the bar (APPLY/STRETCH). "
-                     "The rest are shown ranked but are honest DON'T APPLYs — not padding.")
+    apply_stretch = [v for v in scored if v.get("verdict") in ("APPLY", "STRETCH")]
+    filtered = [v for v in scored if v.get("verdict") not in ("APPLY", "STRETCH")]
 
-    # Details — full, UNTRUNCATED reason + resume-line ↔ JD-requirement citations.
-    lines.append("")
-    lines.append("## Details — full reasoning & citations")
-    for i, v in enumerate(scored[:top_n], 1):
+    def _detail(i, v):
+        """Full, UNTRUNCATED reasoning + resume-line ↔ JD-requirement citations."""
         sen, fn = v.get("seniority") or {}, v.get("function") or {}
         dom, comp, leg = v.get("domain") or {}, v.get("comp_logistics") or {}, v.get("legitimacy") or {}
         quals, qsum = v.get("qualifications") or [], v.get("qualifications_summary") or {}
         rng, ns = v.get("score_range"), v.get("score_samples")
-        lines.append("")
-        lines.append(f"### {i}. {v.get('title','')} — {v.get('company','')}")
+        L = ["", f"### {i}. {v.get('title','')} — {v.get('company','')}"]
         meta = f"**{float(v.get('fit_score',0)):.1f} · {v.get('verdict','')}**"
         if isinstance(rng, list) and len(rng) == 2:
             meta += f"  ·  {ns} sample(s), range {rng[0]}–{rng[1]}"
         if v.get("_scored_by"):
             meta += f"  ·  scored by {v.get('_scored_by')}"
-        lines.append(meta)
+        L.append(meta)
         if v.get("location"):
-            lines.append(f"- **Location:** {v.get('location')}")
-        lines.append(f"- **Link:** {_link(v)}")
-        lines.append(f"- **Verdict reason:** {v.get('headline','')}")        # full, untruncated
+            L.append(f"- **Location:** {v.get('location')}")
+        L.append(f"- **Link:** {_link(v)}")
+        L.append(f"- **Verdict reason:** {v.get('headline','')}")
         if sen.get("evidence") or sen.get("assessment"):
-            lines.append(f"- **Seniority** ({sen.get('assessment','?')}): {sen.get('evidence','')}")
+            L.append(f"- **Seniority** ({sen.get('assessment','?')}): {sen.get('evidence','')}")
         if fn.get("evidence") or fn.get("assessment"):
-            lines.append(f"- **Function** ({fn.get('assessment','?')}): {fn.get('evidence','')}")
+            L.append(f"- **Function** ({fn.get('assessment','?')}): {fn.get('evidence','')}")
         if quals:
-            lines.append(f"- **Qualifications** (met {qsum.get('met','?')} / "
-                         f"partial {qsum.get('partial','?')} / missing {qsum.get('missing','?')}):")
+            L.append(f"- **Qualifications** (met {qsum.get('met','?')} / "
+                     f"partial {qsum.get('partial','?')} / missing {qsum.get('missing','?')}):")
             for q in quals:
                 req = (q.get("requirement", "") or "").strip()
                 ev = (q.get("evidence", "") or "").strip()
-                lines.append(f"    - **[{q.get('status','?')}]** {req}{(' — ' + ev) if ev else ''}")
+                L.append(f"    - **[{q.get('status','?')}]** {req}{(' — ' + ev) if ev else ''}")
         if dom.get("assessment"):
-            lines.append(f"- **Domain** ({dom.get('assessment')}): {dom.get('note','')}")
+            L.append(f"- **Domain** ({dom.get('assessment')}): {dom.get('note','')}")
         if comp.get("assessment"):
-            lines.append(f"- **Comp & logistics** ({comp.get('assessment')}): {comp.get('note','')}")
+            L.append(f"- **Comp & logistics** ({comp.get('assessment')}): {comp.get('note','')}")
         if leg.get("tier"):
             sig = leg.get("signals") or []
             sig = "; ".join(sig) if isinstance(sig, list) else str(sig)
-            lines.append(f"- **Legitimacy** ({leg.get('tier')} — separate read, does not move the score): {sig}")
+            L.append(f"- **Legitimacy** ({leg.get('tier')} — separate read, does not move the score): {sig}")
         if v.get("caps_applied"):
-            lines.append(f"- **Caps applied:** {', '.join(v.get('caps_applied'))}")
+            L.append(f"- **Caps applied:** {', '.join(v.get('caps_applied'))}")
+        return L
+
+    # ── Lead with FIT: APPLY / STRETCH, full detail + citations ──────────────
+    lines.append(f"## ✅ Worth applying — APPLY / STRETCH ({len(apply_stretch)})")
+    if apply_stretch:
+        for i, v in enumerate(apply_stretch[:top_n], 1):
+            lines += _detail(i, v)
+        if len(apply_stretch) > top_n:
+            lines += ["", f"> +{len(apply_stretch) - top_n} more APPLY/STRETCH in data/results/scored.jsonl."]
+    else:
+        lines += ["", "_Nothing cleared the 4.0 apply bar this run. The closest near-misses are in "
+                  "'Filtered out' below — shown honestly, not promoted to fill space._"]
+
+    # ── Secondary: everything filtered out, compact, with the one-line WHY ───
+    lines += ["", f"## Filtered out — and why ({len(filtered)} roles, kept for transparency)"]
+    if filtered:
+        lines += ["", "| Score | Verdict | Title | Company | Why | Link |",
+                  "|------:|---------|-------|---------|-----|------|"]
+        for v in filtered:
+            why = v.get("headline", "") or ""
+            for pre in ("DON'T APPLY", "DON’T APPLY", "DONT APPLY"):
+                if why.upper().startswith(pre.upper()):
+                    why = why[len(pre):].lstrip(" —-:")
+                    break
+            lines.append(f"| {float(v.get('fit_score',0)):.1f} | {v.get('verdict','')} "
+                         f"| {_clean(v.get('title'))} | {_clean(v.get('company'))} "
+                         f"| {_clean(why)[:140]} | {_link(v)} |")
 
     with open(os.path.join(out_dir, "top.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")

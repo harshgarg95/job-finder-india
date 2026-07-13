@@ -33,6 +33,14 @@ def _get_json(url: str) -> object:
     return r.json()
 
 
+def _post_json(url: str, body: dict) -> object:
+    r = requests.post(url, headers={"User-Agent": UA, "Accept": "application/json",
+                                    "Content-Type": "application/json"},
+                      json=body, timeout=TIMEOUT, allow_redirects=False)
+    r.raise_for_status()
+    return r.json()
+
+
 def _strip_html(html: str) -> str:
     if not html:
         return ""
@@ -147,11 +155,79 @@ def fetch_workable(slug: str, company: str) -> list[JobPosting]:
     return out
 
 
+def fetch_workday(slug: str, company: str, host: str, site: str, limit: int = 100) -> list[JobPosting]:
+    """Public, keyless Workday CXS endpoint (verified live 2026-06-18):
+    POST https://{host}/wday/cxs/{slug}/{site}/jobs  with
+        {"appliedFacets": {}, "limit": N, "offset": M, "searchText": ""}
+    → {"total": int, "jobPostings": [{title, externalPath, locationsText, postedOn,
+       bulletFields}]}. Listing-level only; the deep-fetcher pulls the full JD later.
+    Public candidate URL = https://{host}/{site}{externalPath} (resolves 200)."""
+    if not host or not site:
+        raise ValueError("workday tenant needs both 'host' and 'site'")
+    api = f"https://{host}/wday/cxs/{slug}/{site}/jobs"
+    out: list[JobPosting] = []
+    offset, page = 0, 20
+    while offset < limit:
+        data = _post_json(api, {"appliedFacets": {}, "limit": page, "offset": offset, "searchText": ""})
+        posts = (data or {}).get("jobPostings") or []
+        if not posts:
+            break
+        for jp in posts:
+            ep = jp.get("externalPath") or ""
+            out.append(JobPosting(
+                title=jp.get("title", "") or "",
+                company=company,
+                source="ats:workday",
+                url=f"https://{host}/{site}{ep}" if ep else f"https://{host}/{site}",
+                location=jp.get("locationsText", "") or "",
+                description="",                       # deep-fetched later for prescreened jobs
+                posted_at=None,
+            ))
+        offset += len(posts)
+        if len(posts) < page:
+            break
+    return out
+
+
+def fetch_smartrecruiters(slug: str, company: str, limit: int = 100) -> list[JobPosting]:
+    """Public, keyless SmartRecruiters postings API (verified live 2026-06-18):
+    GET https://api.smartrecruiters.com/v1/companies/{slug}/postings?limit&offset
+    → {"totalFound", "content": [{name, location:{city,country,remote}, id,
+       releasedDate, typeOfEmployment:{label}}]}."""
+    out: list[JobPosting] = []
+    offset = 0
+    while offset < limit:
+        data = _get_json(f"https://api.smartrecruiters.com/v1/companies/{slug}/postings"
+                         f"?limit=100&offset={offset}")
+        content = (data or {}).get("content") or []
+        if not content:
+            break
+        for p in content:
+            loc = p.get("location", {}) or {}
+            locstr = ", ".join(x for x in [loc.get("city", ""), (loc.get("country", "") or "").upper()] if x)
+            out.append(JobPosting(
+                title=p.get("name", "") or "",
+                company=company,
+                source="ats:smartrecruiters",
+                url=f"https://jobs.smartrecruiters.com/{slug}/{p.get('id','')}",
+                location=locstr,
+                description="",
+                employment_type=(p.get("typeOfEmployment", {}) or {}).get("label"),
+                remote="remote" if loc.get("remote") else None,
+                posted_at=(p.get("releasedDate") or "")[:10] or None,
+            ))
+        offset += len(content)
+        if len(content) < 100:
+            break
+    return out
+
+
 _FETCHERS = {
     "greenhouse": fetch_greenhouse,
     "lever": fetch_lever,
     "ashby": fetch_ashby,
     "workable": fetch_workable,
+    "smartrecruiters": fetch_smartrecruiters,
 }
 
 
@@ -195,7 +271,12 @@ class AtsProvider:
         errors: list[str] = []
         for t in self.tenants:
             try:
-                jobs = fetch_one(t["ats"], t["slug"], t.get("company", t["slug"]))
+                if t["ats"] == "workday":            # needs host + site, not just a slug
+                    jobs = fetch_workday(t["slug"], t.get("company", t["slug"]),
+                                         t.get("host", ""), t.get("site", ""),
+                                         int(t.get("limit", 100)))
+                else:
+                    jobs = fetch_one(t["ats"], t["slug"], t.get("company", t["slug"]))
                 for j in jobs:  # ATS links are employer-native → verified by construction
                     j.link_verified = True
                     j.link_source = f"employer-ats:{t['ats']}"

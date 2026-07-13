@@ -134,6 +134,15 @@ def main(argv=None) -> int:
     run_cfg = _load_user_yaml("run")
     sources = _load_user_yaml("sources")
     tenants = (load_yaml(os.path.join(ROOT, "config", "ats_tenants.india.yml")) or {}).get("tenants", [])
+    companies = (load_yaml(os.path.join(ROOT, "config", "companies_india.yml")) or {}).get("companies", [])
+    seen, merged = set(), []                         # merge + dedupe (slug may appear in both)
+    for t in tenants + companies:
+        key = (t.get("ats"), t.get("slug"), t.get("host"))
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(t)
+    tenants = merged
     cfg = {"ats_tenants": tenants, "sources": sources, "run": run_cfg,
            "discovery": profile.get("discovery", {})}
 
