@@ -191,6 +191,7 @@ def cmd_enrich(argv: list[str]) -> int:
     ap.add_argument("job_id", help="job_id from prescreened.jsonl")
     a = ap.parse_args(argv)
     from .discovery import job_fetcher
+    profile, _, _, _ = _load()                          # needed for the location re-gate
     ppath = os.path.join(RESULTS, "prescreened.jsonl")
     jobs = [JobPosting.from_dict(json.loads(l)) for l in open(ppath, encoding="utf-8") if l.strip()]
     job = next((j for j in jobs if j.id == a.job_id), None)
@@ -198,16 +199,19 @@ def cmd_enrich(argv: list[str]) -> int:
         print(json.dumps({"error": f"job_id {a.job_id} not in prescreened.jsonl"}))
         return 1
     job_fetcher.enrich(job)                              # deep-fetch full JD (no-op if already full)
-    from . import verify
+    from . import verify, location
     vstatus, vreason = verify.classify(job.url, job.description)   # can we actually score this?
+    lstatus, lreason, lcity = location.regate(job, profile)       # coarse-location onsite re-gate
     print(json.dumps({
         "job_id": job.id, "title": job.title, "company": job.company,
         "url": job.url, "location": job.location, "source": job.source,
         "verifiability": {"status": vstatus, "reason": vreason},
+        "location_gate": {"status": lstatus, "reason": lreason, "derived_city": lcity},
         "scoring_view": job.scoring_view(),             # the exact JD block to score against
-        "RULE": ("Score this job ONLY if verifiability.status == 'ok'. If 'no_jd' or 'non_job_link', "
-                 "DO NOT score — write an unverifiable record and `tracker --add` it (see "
-                 "modes/evaluate.md). NEVER fabricate a verdict for an unverifiable job."),
+        "RULE": ("Score this job ONLY if verifiability.status == 'ok' AND location_gate.status == 'ok'. "
+                 "If EITHER is not 'ok' (no_jd / non_job_link / onsite_elsewhere / location_unverified), "
+                 "DO NOT score — write an unverifiable record (reason = the failing check's reason) and "
+                 "`tracker --add` it (see modes/evaluate.md). NEVER fabricate a verdict."),
     }, ensure_ascii=False, indent=2))
     return 0
 

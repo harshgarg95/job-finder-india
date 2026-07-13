@@ -14,6 +14,11 @@ companies:
   - { company: "Accenture",     ats: workday, slug: accenture, host: "accenture.wd103.myworkdayjobs.com", site: "AccentureCareers", limit: 150 }                   # 2000 total
   - { company: "Fractal Analytics", ats: workday, slug: fractal, host: "fractal.wd1.myworkdayjobs.com",  site: "Careers", india_hq: true }                          # 122 total
   - { company: "Uniphore",      ats: workday, slug: uniphore, host: "uniphore.wd503.myworkdayjobs.com", site: "Uniphore", india_hq: true }                          # 40 total
+  # Added 2026-07-11 (live-probed: CXS 200 + searchText=India count shown). Global-HQ, India-heavy.
+  - { company: "Nvidia",        ats: workday, slug: nvidia,     host: "nvidia.wd5.myworkdayjobs.com",     site: "NVIDIAExternalCareerSite", limit: 150 }             # 2000 total · 201 India
+  - { company: "Salesforce",    ats: workday, slug: salesforce, host: "salesforce.wd12.myworkdayjobs.com", site: "External_Career_Site",    limit: 150 }             # 1485 total · 273 India
+  - { company: "Adobe",         ats: workday, slug: adobe,      host: "adobe.wd5.myworkdayjobs.com",      site: "external_experienced",     limit: 150 }             # 898 total · 182 India
+  - { company: "Mastercard",    ats: workday, slug: mastercard, host: "mastercard.wd1.myworkdayjobs.com", site: "CorporateCareers",         limit: 150 }             # 1159 total · 235 India
 
   # ── Greenhouse / Ashby / Lever / SmartRecruiters (public, keyless) ──────────
   - { company: "Freshworks",    ats: smartrecruiters, slug: Freshworks, india_hq: true }   # 101 postings
@@ -23,6 +28,12 @@ companies:
   - { company: "Tiger Analytics", ats: ashby,    slug: tiger, india_hq: true }
   - { company: "Sarvam AI",     ats: ashby,      slug: sarvam, india_hq: true }
   - { company: "Meesho",        ats: lever,      slug: meesho, india_hq: true }
+  # Added 2026-07-11 (live-probed lever: HTTP 200 + India-role count shown). India-HQ.
+  - { company: "Paytm",         ats: lever,      slug: paytm,      india_hq: true }   # 228 total · 194 India
+  - { company: "Mindtickle",    ats: lever,      slug: mindtickle, india_hq: true }   # 21 total · 19 India
+  - { company: "Netomi",        ats: lever,      slug: netomi,     india_hq: true }   # 29 total · 18 India (AI)
+  - { company: "Zeta",          ats: lever,      slug: zeta,       india_hq: true }   # 17 total · 16 India (fintech)
+  - { company: "CRED",          ats: lever,      slug: cred,       india_hq: true }   # 5 total · 4 India
 
 # Could NOT be verified on the free per-tenant route → deliberately NOT scanned
 # (never write an unverified slug). Reasons captured for transparency.
@@ -47,3 +58,9 @@ unresolved:
   - { company: "Flipkart",      detected: none, reason: "no public ATS signature found" }
   - { company: "Yellow.ai",     detected: none, reason: "no public ATS signature found" }
   - { company: "Gupshup",       detected: none, reason: "no public ATS signature found" }
+  # Probed 2026-07-11 for the lever/workable/smartrecruiters/workday expansion — NOT added:
+  - { company: "HackerRank",    detected: smartrecruiters, reason: "SR account is test/demo data ('Demo Job', 'Test Job') — not real hiring" }
+  - { company: "Unacademy",     detected: smartrecruiters, reason: "SR account near-empty/test ('Test Jerin')" }
+  - { company: "Whatfix",       detected: smartrecruiters, reason: "SR account has 1 'test' posting — not real hiring" }
+  - { company: "Cisco/Wipro/TechM/Dell/SAP/Nutanix/Cohesity", detected: workday, reason: "public CXS did not resolve at the guessed host/site (no verified endpoint — not guessed in)" }
+  # No India-hiring Workable tenant resolved among the probed candidates (Workable stays 0 for now).

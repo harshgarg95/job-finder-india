@@ -22,17 +22,18 @@ host model) in this session. No headless model call.
    individually scored)" with their deterministic reason — do NOT score them, and do NOT
    invent verdicts for them. (This is the latency win: 15 scored, not 40.)
 5. **Score each job in `score_these`, in-session, in batches of ~8–10:**
-   - `python -m jobfinder enrich <job_id>` → **read `verifiability.status` first.**
-     - **If `status != "ok"`** (`no_jd` = empty/too-thin JD, or `non_job_link` = a bare
-       domain / careers-list page): the tool couldn't actually read the posting. **DO NOT
-       score it and do NOT fabricate a verdict.** Write an unverifiable record and add it —
-       it lands in "⚠️ Couldn't verify", never in APPLY/STRETCH:
+   - `python -m jobfinder enrich <job_id>` → **read `verifiability.status` AND `location_gate.status` first.**
+     - **If either is not `"ok"`** — `no_jd` / `non_job_link` (couldn't read the posting), or
+       `onsite_elsewhere` (JD's city is outside your `onsite_cities`) / `location_unverified`
+       (onsite but no city could be derived, so it can't be passed as "India"): **DO NOT score
+       it and do NOT fabricate a verdict.** Write an unverifiable record (reason = the failing
+       check's reason) and add it — it lands in "⚠️ Couldn't verify", never in APPLY/STRETCH:
        ```bash
        # data/results/_verdict.json = {"job_id":"<id>","title":"…","company":"…","url":"…",
-       #                               "unverifiable":true,"reason":"<verifiability.reason>"}
+       #                               "unverifiable":true,"reason":"<the failing check's reason>"}
        python -m jobfinder tracker --add data/results/_verdict.json
        ```
-     - **If `status == "ok"`**: use the returned `scoring_view` (the full JD). Apply
+     - **If both are `"ok"`**: use the returned `scoring_view` (the full JD). Apply
        `prompts/_rubric.md` against `resume.md` + `config/profile.yml`. Cite the exact
        résumé line ↔ exact JD requirement for every dimension. Keep legitimacy separate.
        Default low; re-score borderline (≈3.5–4.2) once, keep the lower. Emit ONE JSON

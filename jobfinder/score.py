@@ -90,6 +90,7 @@ def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_
     from . import feedback
     from . import skills as skills_mod
     from . import verify
+    from . import location
 
     run_cfg = run_cfg or {}
     scoring_cfg = run_cfg.get("scoring", {}) or {}
@@ -167,6 +168,19 @@ def score_and_rank(resume_path: str, jobs: list[JobPosting], profile: dict, out_
                    "url": job.url, "location": job.location, "source": job.source,
                    "link_source": job.link_source, "unverifiable": True,
                    "verify_status": vstatus, "reason": vreason}
+            done[job.id] = rec
+            ckpt.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            ckpt.flush()
+            continue
+        # CHANGE 1 — location re-gate: for a coarse channel location, derive the city
+        # from the JD and re-run the onsite gate; gate out an onsite-elsewhere role (or
+        # an onsite role whose city can't be verified) instead of scoring it as "India".
+        lstatus, lreason, lcity = location.regate(job, profile)
+        if lstatus != "ok":
+            rec = {"job_id": job.id, "title": job.title, "company": job.company,
+                   "url": job.url, "location": job.location, "source": job.source,
+                   "link_source": job.link_source, "unverifiable": True,
+                   "verify_status": lstatus, "reason": lreason, "derived_city": lcity}
             done[job.id] = rec
             ckpt.write(json.dumps(rec, ensure_ascii=False) + "\n")
             ckpt.flush()
