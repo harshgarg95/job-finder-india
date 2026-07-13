@@ -113,6 +113,23 @@ def _is_failover_error(msg: str) -> bool:
     return any(h in m for h in _FAILOVER_HINTS)
 
 
+class UsageLimitError(RuntimeError):
+    """The chosen CLI reported a subscription / usage-window limit — a 'come back
+    later' state, not a hard failure. The run should PAUSE and resume later (the
+    per-job checkpoint makes a re-run resume), NOT cascade to gemini/ollama."""
+
+
+# Subscription/usage-window phrases (claude -p --output-format json result text).
+# Kept distinct from auth errors (401) and from generic quota words used by the
+# gemini-failover test, so only a real usage-window envelope is treated this way.
+_USAGE_LIMIT_HINTS = ("usage limit", "limit reached", "limit will reset", "reset at",
+                      "out of credit", "insufficient credit", "subscription")
+
+
+def _is_usage_limit(msg: str) -> bool:
+    return any(h in (msg or "").lower() for h in _USAGE_LIMIT_HINTS)
+
+
 def _invoke(adapter: CliAdapter, prompt: str, *, timeout: int,
             runner: Optional[Callable[[list[str], str], str]]) -> tuple[str, Optional[float]]:
     """Run ONE CLI once. Returns (text_to_parse, cost_usd). Raises on any
@@ -147,7 +164,10 @@ def _invoke(adapter: CliAdapter, prompt: str, *, timeout: int,
             env = None
         if isinstance(env, dict) and ("result" in env or "is_error" in env):
             if env.get("is_error"):
-                raise RuntimeError(str(env.get("result") or env.get("subtype") or "CLI reported is_error"))
+                msg = str(env.get("result") or env.get("subtype") or "CLI reported is_error")
+                # Subscription/usage window reached → pause-and-resume signal, not a
+                # cascading failure (don't spam failover to gemini/ollama).
+                raise (UsageLimitError(msg) if _is_usage_limit(msg) else RuntimeError(msg))
             return str(env.get("result", "")), env.get("total_cost_usd")
         # Envelope wasn't the expected shape — fall back to raw stdout.
         return out, None
@@ -213,6 +233,13 @@ def score(
             result = _score_one(prompt, c, timeout=timeout, runner=runner)
             result.setdefault("_scored_by", c)
             return result
+        except UsageLimitError as e:
+            # Subscription/usage window reached. Do NOT cascade to other CLIs —
+            # surface a clear pause signal; the per-job checkpoint lets a later
+            # re-run resume from here.
+            raise UsageLimitError(
+                f"{c}: usage/subscription limit reached — pause and resume later "
+                f"(re-run to continue). {e}") from e
         except Exception as e:  # noqa: BLE001 — any failure → try next CLI
             errors.append(f"{c}: {e}")
             nxt = order[i + 1] if i + 1 < len(order) else None

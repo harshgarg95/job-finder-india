@@ -296,6 +296,21 @@ def _write_outputs(scored: list[dict], failures: list[dict], out_dir: str, top_n
         dist[v.get("verdict", "DON'T APPLY")] = dist.get(v.get("verdict", "DON'T APPLY"), 0) + 1
     n_apply, n_stretch, n_no = dist["APPLY"], dist["STRETCH"], dist["DON'T APPLY"]
 
+    def _provider(v: dict) -> str:
+        # "employer-ats:greenhouse" / "ats:greenhouse" -> "greenhouse"; "apify:naukri" -> "naukri"
+        s = v.get("link_source") or v.get("source") or ""
+        return s.split(":")[-1].strip() if s else ""
+
+    def _link(v: dict) -> str:
+        url = (v.get("url") or "").strip()
+        prov = _provider(v)
+        if not url:
+            return f"— ({prov})" if prov else "—"
+        return f"[open]({url})" + (f" · {prov}" if prov else "")
+
+    def _clean(s) -> str:
+        return (str(s or "")).replace("|", "/").replace("\n", " ").strip()
+
     lines = ["# Honest top results", ""]
     if funnel:
         lines.append(f"**Funnel:** raw {funnel.get('raw','?')} → candidates {funnel.get('candidates','?')} "
@@ -309,17 +324,61 @@ def _write_outputs(scored: list[dict], failures: list[dict], out_dir: str, top_n
     lines.append(f"Scored {len(scored)} jobs — "
                  f"{n_apply} APPLY · {n_stretch} STRETCH · {n_no} DON'T APPLY{fail_note}{cost_note}")
     lines.append("")
-    lines.append("| # | Score | Verdict | Title | Company | Honest reason |")
-    lines.append("|---|------:|---------|-------|---------|---------------|")
+
+    # Compact ranked table — link is clickable; the full reason is in Details below.
+    lines.append("| # | Score | Verdict | Title | Company | Link |")
+    lines.append("|---|------:|---------|-------|---------|------|")
     for i, v in enumerate(scored[:top_n], 1):
-        reason = (v.get("headline", "") or "").replace("|", "/")
         lines.append(f"| {i} | {float(v.get('fit_score',0)):.1f} | {v.get('verdict','')} "
-                     f"| {v.get('title','')[:48]} | {v.get('company','')[:20]} | {reason[:160]} |")
+                     f"| {_clean(v.get('title'))} | {_clean(v.get('company'))} | {_link(v)} |")
     applies = n_apply + n_stretch
     if applies < top_n:
         lines.append("")
         lines.append(f"> Only {applies} of these clear the bar (APPLY/STRETCH). "
                      "The rest are shown ranked but are honest DON'T APPLYs — not padding.")
+
+    # Details — full, UNTRUNCATED reason + resume-line ↔ JD-requirement citations.
+    lines.append("")
+    lines.append("## Details — full reasoning & citations")
+    for i, v in enumerate(scored[:top_n], 1):
+        sen, fn = v.get("seniority") or {}, v.get("function") or {}
+        dom, comp, leg = v.get("domain") or {}, v.get("comp_logistics") or {}, v.get("legitimacy") or {}
+        quals, qsum = v.get("qualifications") or [], v.get("qualifications_summary") or {}
+        rng, ns = v.get("score_range"), v.get("score_samples")
+        lines.append("")
+        lines.append(f"### {i}. {v.get('title','')} — {v.get('company','')}")
+        meta = f"**{float(v.get('fit_score',0)):.1f} · {v.get('verdict','')}**"
+        if isinstance(rng, list) and len(rng) == 2:
+            meta += f"  ·  {ns} sample(s), range {rng[0]}–{rng[1]}"
+        if v.get("_scored_by"):
+            meta += f"  ·  scored by {v.get('_scored_by')}"
+        lines.append(meta)
+        if v.get("location"):
+            lines.append(f"- **Location:** {v.get('location')}")
+        lines.append(f"- **Link:** {_link(v)}")
+        lines.append(f"- **Verdict reason:** {v.get('headline','')}")        # full, untruncated
+        if sen.get("evidence") or sen.get("assessment"):
+            lines.append(f"- **Seniority** ({sen.get('assessment','?')}): {sen.get('evidence','')}")
+        if fn.get("evidence") or fn.get("assessment"):
+            lines.append(f"- **Function** ({fn.get('assessment','?')}): {fn.get('evidence','')}")
+        if quals:
+            lines.append(f"- **Qualifications** (met {qsum.get('met','?')} / "
+                         f"partial {qsum.get('partial','?')} / missing {qsum.get('missing','?')}):")
+            for q in quals:
+                req = (q.get("requirement", "") or "").strip()
+                ev = (q.get("evidence", "") or "").strip()
+                lines.append(f"    - **[{q.get('status','?')}]** {req}{(' — ' + ev) if ev else ''}")
+        if dom.get("assessment"):
+            lines.append(f"- **Domain** ({dom.get('assessment')}): {dom.get('note','')}")
+        if comp.get("assessment"):
+            lines.append(f"- **Comp & logistics** ({comp.get('assessment')}): {comp.get('note','')}")
+        if leg.get("tier"):
+            sig = leg.get("signals") or []
+            sig = "; ".join(sig) if isinstance(sig, list) else str(sig)
+            lines.append(f"- **Legitimacy** ({leg.get('tier')} — separate read, does not move the score): {sig}")
+        if v.get("caps_applied"):
+            lines.append(f"- **Caps applied:** {', '.join(v.get('caps_applied'))}")
+
     with open(os.path.join(out_dir, "top.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
