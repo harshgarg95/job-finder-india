@@ -82,6 +82,11 @@ def check() -> dict:
         "clis": clis,
         "clis_present": [c["id"] for c in clis],
         "ollama": ollama,
+        # Scoring runs in-session, so model quality matters. The agent relays this on first run.
+        "model_advice": ("Scoring is done in-session by your model — model quality matters. "
+                         "If you're on a small/default model (GitHub Copilot 'Auto', gpt-5-mini/"
+                         "nano, Haiku-tier), switch to a capable one (Copilot: pick GPT-5 or "
+                         "Claude Sonnet/Opus, not 'Auto') before scoring for reliable verdicts."),
         "files": files,
         "missing_required": missing_required,
         "missing_recommended": missing_recommended,
@@ -109,6 +114,9 @@ def _human(rep: dict) -> str:
     if oll["installed"]:
         ms = ", ".join(oll["models"][:6]) or "(no models pulled)"
         lines.append(f"  ✓ ollama (local/free) — models: {ms}")
+    lines.append("")
+    lines.append("⚠ Model tip: scoring runs in-session, so use a CAPABLE model.")
+    lines.append("  On GitHub Copilot pick GPT-5 or Claude (Sonnet/Opus) — not 'Auto'/gpt-5-mini.")
     lines.append("")
     lines.append("Config & resume files:")
     label = {

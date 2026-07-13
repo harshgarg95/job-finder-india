@@ -4,12 +4,19 @@ Read these two files in full; they are the engine and they do not change:
 - **`prompts/_rubric.md`** — the honest-fit rubric (THE law).
 - **`prompts/score-job.md`** — the exact JSON object you must emit per job.
 
-## Presenting choices (UX convention — follow in EVERY mode)
-Whenever you ask the user to decide, present a **numbered list**, mark the default
-`← (default)`, and end with: *"Reply with the number (or just tell me)."* Free-text
-always works too. After producing results, offer **numbered next-actions** the same
-way. Keep it plain text you print — no CLI-specific buttons/widgets (portable across
-Claude / Codex / OpenCode / Qwen / Antigravity).
+## Presenting choices (UX convention — MANDATORY at EVERY decision point)
+Whenever you ask the user to decide **anything** — an onboarding step, the "what next?"
+after results, a feedback mark, the command-center menu — you **MUST** present the options
+as a **numbered list** (one option per line), mark the default `← (default)`, and end with
+the exact line **"Reply with the number."** Do **not** phrase the options as a sentence or
+free-running text; a plain numbered list is required so a weaker model's flow stays
+unambiguous. This includes the **post-results next-actions** menu — it is a numbered list,
+never prose.
+
+The user is in a **terminal**: they **type the number and press enter** — there are **no
+clickable buttons or widgets**, and that is expected. Print plain text only (portable across
+Claude / Codex / OpenCode / Qwen / Antigravity). Free-text answers still work, but you must
+always OFFER the numbered list first.
 
 ## The candidate (read once per session)
 - `resume.md` — the résumé (full text).

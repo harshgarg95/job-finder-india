@@ -33,6 +33,17 @@ to `modes/onboarding.md` and refuse `evaluate`/`scan`** until these exist:
 `resume.md`, `config/profile.yml`, `config/sources.yml`. (LLM choice + login are
 implicit — the user already opened their CLI.)
 
+## Model check — do this on your first message
+Scoring is done **by you, in-session**, so **your model matters.** If you are running as a
+**small / default model** (e.g. GitHub Copilot **"Auto"**, `gpt-5-mini` / `gpt-5-nano`,
+Haiku-tier, or similar lightweight default), tell the user before you start:
+> ⚠️ For reliable results, switch to a capable model — **Copilot: pick GPT-5 or Claude
+> (Sonnet/Opus), not "Auto."** Then re-open here and say "find me jobs." A small model
+> gives less reliable verdicts and can lose the flow.
+
+Offer to continue anyway if they insist, but say the scoring may be less reliable.
+`doctor --json` also returns this as `model_advice` — relay it if present.
+
 ## Mode routing
 | The user wants… | Mode |
 |---|---|
@@ -73,8 +84,12 @@ Routing: **1** → `modes/evaluate.md` · **2** → `modes/scan.md` · **3** →
 ## Hard rules (do not violate)
 1. **Volume safety.** Score **only** the jobs `prescreen` returns (≤ `max_llm_jobs`).
    Never discover or score beyond `prescreened.jsonl`. The tool also caps in code.
-2. **Score in-session.** YOU score each job with your own model. Never shell out
-   to a headless `claude -p` (that's the separate CI path).
+2. **Score in-session — there is NO `score` command.** YOU score each job with your own
+   model: read `prompts/_rubric.md` + `resume.md` + the job's JD, **write the JSON verdict
+   yourself**, then persist it with `tracker --add`. Do **not** run or search for a
+   `score` / `evaluate` subcommand — it does not exist (the only tools are `doctor`,
+   `discover`, `prescreen`, `enrich`, `tracker`, `live`, `preferences`, `benchmark`). Never
+   shell out to a headless `claude -p` (that's the separate CI path).
 3. **The rubric is the law.** `prompts/_rubric.md` (6 dimensions, 4.0 apply line,
    mandatory resume-line ↔ JD-requirement citations, India archetypes + comp,
    legitimacy kept SEPARATE from the 1–5, holistic + caps, no weighted sum). Never

@@ -3,6 +3,14 @@
 Goal: an honest, citation-backed top-N for the user's résumé, scored by YOU (the
 host model) in this session. No headless model call.
 
+> **HOW SCORING WORKS — read this before you start.** Scoring is done **BY YOU, the model,
+> IN-SESSION.** You read `prompts/_rubric.md` + `resume.md` + the job's JD and **write the JSON
+> verdict yourself.** There is **NO `score` (or `evaluate`) CLI subcommand — do not run one, and
+> do not search for one; it does not exist.** The ONLY `jobfinder` subcommands are: `doctor`,
+> `discover`, `prescreen`, `enrich`, `tracker`, `live`, `preferences`, `benchmark`. If you ever
+> catch yourself looking for a way to "run scoring," STOP — **you are the scorer**; producing the
+> verdict JSON and saving it with `tracker --add` is the entire act of scoring.
+
 ## Procedure
 1. **Gate.** `python -m jobfinder doctor --json`. If `needs_onboarding` → go to
    `modes/onboarding.md` and stop.
@@ -21,45 +29,74 @@ host model) in this session. No headless model call.
    `score_these`.** The rest are auto-listed by the tracker under "Prescreen-filtered (not
    individually scored)" with their deterministic reason — do NOT score them, and do NOT
    invent verdicts for them. (This is the latency win: 15 scored, not 40.)
-5. **Score each job in `score_these`, in-session, in batches of ~8–10:**
-   - `python -m jobfinder enrich <job_id>` → **read `verifiability.status` AND `location_gate.status` first.**
-     - **If either is not `"ok"`** — `no_jd` / `non_job_link` (couldn't read the posting), or
-       `onsite_elsewhere` (JD's city is outside your `onsite_cities`) / `location_unverified`
-       (onsite but no city could be derived, so it can't be passed as "India"): **DO NOT score
-       it and do NOT fabricate a verdict.** Write an unverifiable record (reason = the failing
-       check's reason) and add it — it lands in "⚠️ Couldn't verify", never in APPLY/STRETCH:
-       ```bash
-       # data/results/_verdict.json = {"job_id":"<id>","title":"…","company":"…","url":"…",
-       #                               "unverifiable":true,"reason":"<the failing check's reason>"}
-       python -m jobfinder tracker --add data/results/_verdict.json
-       ```
-     - **If both are `"ok"`**: use the returned `scoring_view` (the full JD). Apply
-       `prompts/_rubric.md` against `resume.md` + `config/profile.yml`. Cite the exact
-       résumé line ↔ exact JD requirement for every dimension. Keep legitimacy separate.
-       Default low; re-score borderline (≈3.5–4.2) once, keep the lower. Emit ONE JSON
-       verdict (schema in `score-job.md`, include `job_id`), write it to a temp file, then
-       `python -m jobfinder tracker --add data/results/_verdict.json`. (File-based add is
-       robust across CLIs; a raw `printf … | tracker --add -` pipe breaks on the apostrophe
-       in `DON'T APPLY`.)
-   - Persist each record as you go (crash-safe; the tracker upserts by `job_id`).
+5. **Score each job in `score_these`, in-session — YOU are the scorer, one job at a time.**
+   For each `job_id` in `score_these`:
+   1. **Enrich:** `python -m jobfinder enrich <job_id>` → read `verifiability.status` and
+      `location_gate.status` from its JSON output.
+   2. **If either is NOT `"ok"`** — `no_jd` / `non_job_link` (the tool couldn't read the
+      posting), or `onsite_elsewhere` / `location_unverified` (location fails your gate):
+      **DO NOT score it and do NOT invent a verdict.** Write an unverifiable record (reason =
+      the failing check's reason) and add it — it lands in "⚠️ Couldn't verify", never APPLY:
+      ```bash
+      # data/results/_verdict.json = {"job_id":"<id>","title":"…","company":"…","url":"…",
+      #                               "unverifiable":true,"reason":"<the failing check's reason>"}
+      python -m jobfinder tracker --add data/results/_verdict.json
+      ```
+   3. **If both are `"ok"`:** take `scoring_view` (the full JD) from the enrich output. **YOU**
+      apply `prompts/_rubric.md` against `resume.md` + `config/profile.yml` — cite the exact
+      résumé line ↔ exact JD requirement for every dimension, keep legitimacy separate, default
+      low, re-score a borderline (≈3.5–4.2) once and keep the lower. **Write the JSON verdict
+      yourself** (schema in `prompts/score-job.md`, include `job_id`) to
+      `data/results/_verdict.json`, then persist it:
+      `python -m jobfinder tracker --add data/results/_verdict.json`.
+
+   Persist each as you go (crash-safe; the tracker upserts by `job_id`). **There is no `score`
+   command** — writing the verdict JSON and adding it IS the scoring. (File-based add is robust
+   across CLIs; a raw `printf … | tracker --add -` pipe breaks on the apostrophe in `DON'T APPLY`.)
+
+   ### Worked example — one job, end to end (copy this exact pattern)
+   ```bash
+   python -m jobfinder enrich 5f2a1c9b
+   # → {"verifiability":{"status":"ok"}, "location_gate":{"status":"ok"},
+   #    "scoring_view":"Title: Technical Program Manager, AI\nCompany: Acme\n… full JD …"}
+   ```
+   You read that `scoring_view` + `resume.md` + `prompts/_rubric.md`, decide the verdict
+   yourself, and write `data/results/_verdict.json`:
+   ```json
+   {"job_id":"5f2a1c9b","company":"Acme","title":"Technical Program Manager, AI","url":"https://…",
+    "fit_score":4.2,"verdict":"APPLY",
+    "headline":"APPLY — TPM-AI is your function and you clear the JD's 5-yr program-management minimum",
+    "seniority":{"assessment":"match","evidence":"resume '8y programme management' vs JD 'Mid, 5 years program management'"},
+    "function":{"assessment":"match","evidence":"resume 'AI delivery / technical program management' vs JD 'Technical Program Manager, AI'"},
+    "qualifications":[{"requirement":"5 years program management","status":"met","evidence":"8y across Skootr + Blueprint"}],
+    "qualifications_summary":{"met":1,"partial":0,"missing":0},
+    "domain":{"assessment":"n/a","note":"delivery role; domain is context"},
+    "comp_logistics":{"assessment":"ok","note":"Hyderabad onsite OK; comp not stated"},
+    "legitimacy":{"tier":"high","signals":["real employer JD, specific team"]},
+    "caps_applied":[],"holistic_before_caps":4.2}
+   ```
+   Then `python -m jobfinder tracker --add data/results/_verdict.json`. Repeat for every job in
+   `score_these`. A DON'T-APPLY looks the same but with e.g. `"verdict":"DON'T APPLY"`,
+   `"fit_score":1.5`, and `"caps_applied":["wrong_function->2.0"]`.
 6. **Present.** Show `data/results/top.md`. It now has four parts: **✅ APPLY / STRETCH**
    (full detail + citations) · **⚠️ Couldn't verify — check manually** (unreadable / non-job
    links, with reason) · **Filtered out — and why** (DON'T APPLY) · **Prescreen-filtered —
    not individually scored** (rank + reason). The footer prints the wall-clock time. If a
    "raise `full_score_top_n`" risk note appears in top.md, relay it to the user.
-7. **Offer next actions** (numbered, per the `_shared.md` convention):
-   > What next? Reply with a number:
+7. **Offer next actions — MANDATORY numbered list (never free text; see `_shared.md`).**
+   Present exactly this and end with "Reply with the number." (the user types it in the terminal):
+   > What next? Reply with the number:
    >   **1.** Open the full report (`data/results/top.md`)
    >   **2.** Widen sources — add Adzuna/JSearch keys (`.env`), or enable Apify deep-mode
    >   **3.** Adjust target roles / filters (`config/profile.yml`) and re-run
    >   **4.** Check whether a posting is still live (`python -m jobfinder live <job_id>`)
    >   **5.** Done `← (default)`
-8. **Review & learn (feedback loop).** For each shown job, offer a numbered mark
-   (per the `_shared.md` choice convention):
-   > Mark this one? Reply with a number:
+8. **Review & learn (feedback loop).** For each shown job, offer a MANDATORY numbered mark
+   (per the `_shared.md` choice convention — the user types the number):
+   > Mark this one? Reply with the number:
    >   **1.** Applied   **2.** Interested   **3.** Not suitable   **4.** Skip `← (default)`
 
-   If **3 (Not suitable)**, ask the reason:
+   If **3 (Not suitable)**, ask the reason as a numbered list — "Reply with the number.":
    >   **1.** Too senior   **2.** Wrong function   **3.** Location   **4.** Comp   **5.** Company   **6.** Other
 
    Store each (Skip records nothing) — pass the job's fields so the preference layer can learn:
@@ -76,7 +113,9 @@ host model) in this session. No headless model call.
    `python -m jobfinder preferences --clear`.
 
 ## NEVER
-- Score, discover, or enrich anything outside `prescreened.jsonl`.
+- **Run or search for a `score` / `evaluate` subcommand — it does not exist.** YOU write the
+  verdict JSON; `tracker --add` persists it. That is the whole scoring step.
+- Score, discover, or enrich anything outside `prescreened.jsonl` / `score_these`.
 - Invent a citation, or output APPLY without a cited résumé line.
 - Shell out to a headless `claude -p` (that's the separate CI path).
 - Auto-apply or draft an application. Score and stop.

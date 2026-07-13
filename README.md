@@ -94,12 +94,19 @@ result and never silently degrades.
 ## Run it inside your own AI CLI (prompt-pack — primary mode)
 
 Open this repo in the AI CLI you already use (**Claude Code / Codex / OpenCode /
-Qwen / Antigravity** — legacy Gemini → Antigravity) and just say **"find me jobs."**
+Qwen / Antigravity** — legacy Gemini → Antigravity). **What to type:** once it's open,
+just say **`find me jobs`** (or `get started` on a first run). That's the whole interface.
 The CLI reads [`AGENTS.md`](AGENTS.md) (canonical) + [`modes/`](modes/) — entry via
 the skill router [`.agents/skills/job-finder-india/SKILL.md`](.agents/skills/job-finder-india/SKILL.md) —
-and drives the flow: a deterministic cold-start check, conversational onboarding,
+and drives the flow: a deterministic cold-start check, conversational onboarding
+(it **asks for your résumé and writes the files for you** — you never hand-create them),
 then it calls small Python tools for the plumbing and **scores the bounded set
 in-session with its own model** — no API key held by the app, no headless token.
+
+> **Use a capable model.** Scoring happens *in-session*, so the model you pick is the
+> scorer. On **GitHub Copilot, choose GPT-5 or Claude (Sonnet/Opus) — not "Auto"** (which
+> may route to `gpt-5-mini`). Avoid small/default tiers (`gpt-5-mini`/`nano`, Haiku-tier):
+> they give less reliable verdicts and can lose the multi-step flow. `doctor` prints this tip too.
 (Architecture, UX, and flow mirror [career-ops](https://github.com/santifer/career-ops);
 the India scoring rubric, prescreen cap, and Apify spend-safety are ours.)
 
