@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from urllib.parse import quote
 
@@ -224,10 +225,11 @@ USAGE_MONTHLY = "https://api.apify.com/v2/users/me/usage/monthly"
 _MIN_HEADROOM_USD = 0.10
 
 
-def probe(token: str) -> tuple[bool | None, str]:
+def probe(token: str) -> tuple[bool | None, str, float | None]:
     """Cheap, read-only credit/account check (NOT a scrape). Returns
-    (available, note):  True = credits remain, False = exhausted, None = could
-    not determine (network/HTTP error → treat as transient, re-probe next run).
+    (available, note, remaining_usd):  available True=credits remain /
+    False=exhausted / None=could-not-determine (transient, re-probe next run).
+    remaining_usd is the USD headroom (None if the plan doesn't expose usage).
 
     Reads (verified live against this account, 2026-06-18):
       • GET /v2/users/me           → data.plan.maxMonthlyUsageUsd   (monthly cap, USD)
@@ -241,8 +243,8 @@ def probe(token: str) -> tuple[bool | None, str]:
         me = requests.get(USERS_ME, headers=headers, timeout=20)
         if me.status_code != 200:
             if is_credit_or_quota_error(me.status_code, me.text):
-                return False, f"users/me HTTP {me.status_code} (credits/quota)"
-            return None, f"users/me HTTP {me.status_code}"
+                return False, f"users/me HTTP {me.status_code} (credits/quota)", 0.0
+            return None, f"users/me HTTP {me.status_code}", None
         plan = ((me.json() or {}).get("data") or {}).get("plan") or {}
         limit = plan.get("maxMonthlyUsageUsd")
 
@@ -253,14 +255,14 @@ def probe(token: str) -> tuple[bool | None, str]:
             used = ud.get("totalUsageCreditsUsdAfterVolumeDiscount")
             resets = ((ud.get("usageCycle") or {}).get("endAt") or "")[:10]
     except Exception as e:  # noqa: BLE001
-        return None, f"probe error: {e}"
+        return None, f"probe error: {e}", None
 
     if isinstance(limit, (int, float)) and isinstance(used, (int, float)):
         remaining = limit - used
         available = remaining >= _MIN_HEADROOM_USD
         note = f"${remaining:.2f} of ${limit:.0f} remaining" + (f", cycle resets {resets}" if resets else "")
-        return available, note
-    return True, "account reachable (usage fields not exposed)"
+        return available, note, remaining
+    return True, "account reachable (usage fields not exposed)", None
 
 
 def resolve(cfg: dict) -> dict:
@@ -275,23 +277,25 @@ def resolve(cfg: dict) -> dict:
     """
     sub = _sources_apify(cfg)
     if not sub.get("enabled"):
-        return {"state": "disabled", "reason": "off in config/sources.yml", "credits": None}
+        return {"state": "disabled", "reason": "off in config/sources.yml",
+                "credits": None, "remaining_usd": None}
     token = os.environ.get("APIFY_TOKEN")
     if not token:
-        return {"state": "no-token", "reason": "no APIFY_TOKEN in .env", "credits": None}
+        return {"state": "no-token", "reason": "no APIFY_TOKEN in .env",
+                "credits": None, "remaining_usd": None}
 
-    available, note = probe(token)
+    available, note, remaining = probe(token)
     if available is None:                                   # transient — re-probe next run
-        return {"state": "error", "reason": note, "credits": None}
+        return {"state": "error", "reason": note, "credits": None, "remaining_usd": None}
     if available:
         was_paused = is_paused()
         if was_paused:
             resume()                                        # credits returned → auto-resume
         return {"state": "active",
                 "reason": ("credits returned — auto-resumed; " + note) if was_paused else note,
-                "credits": note}
+                "credits": note, "remaining_usd": remaining}
     pause(f"no credits ({note})")                           # persist; auto-resumes when probe ok
-    return {"state": "paused-no-credits", "reason": note, "credits": note}
+    return {"state": "paused-no-credits", "reason": note, "credits": note, "remaining_usd": remaining}
 
 
 class ApifyProvider:
@@ -317,7 +321,7 @@ class ApifyProvider:
             return False
         if is_paused():
             st = state.read(_STATE)
-            ok, note = probe(os.environ["APIFY_TOKEN"])
+            ok, note, _ = probe(os.environ["APIFY_TOKEN"])
             if ok:
                 resume()
                 print(f"✓ Apify credits look available again ({note}) — auto-resumed.", file=sys.stderr)
@@ -332,13 +336,33 @@ class ApifyProvider:
         if not token:
             return []
         sub = _sources_apify(cfg)
+        budget = (cfg.get("run") or {}).get("apify") or {}
+        max_spend = float(budget.get("max_spend_usd_per_run", 0.50))
+        max_items = int(budget.get("max_items", 200))
+        actor_timeout = int(budget.get("actor_timeout_s", 300))
+
+        # ── BEFORE: budget gate. effective_budget = min(per-run ceiling,
+        #    remaining − headroom). <= 0 → skip, never scrape (never drains). ──
+        remaining_before = (cfg.get("apify_resolved") or {}).get("remaining_usd")
+        if remaining_before is None:
+            _, _, remaining_before = probe(token)
+        effective_budget = (min(max_spend, remaining_before - _MIN_HEADROOM_USD)
+                            if remaining_before is not None else max_spend)
+        if remaining_before is not None and effective_budget <= 0:
+            self.last_errors = [f"skipped pre-scrape: effective budget ${effective_budget:.2f} "
+                                f"<= 0 (remaining ${remaining_before:.2f}) — never drains the balance"]
+            pause(f"effective budget ${effective_budget:.2f} <= 0 (remaining ${remaining_before:.2f})")
+            return []
+
         platforms = sub.get("platforms", DEFAULT_PLATFORMS)
         actors = sub.get("actors", {})            # optional per-platform actor override
-        per = int(sub.get("limit", min(40, query.limit_per_channel)))
+        per = min(int(sub.get("limit", max_items)), max_items)   # per-platform records, capped
         titles = query.titles[:6] or ([query.raw_keywords] if query.raw_keywords else [])
         headers = {"Authorization": f"Bearer {token}"}
         out, errors, timeouts = [], [], 0
+        t0 = time.monotonic()
 
+        # ── DURING: bound the scrape with Apify-NATIVE limits, not just ours. ──
         for plat in platforms:
             spec = PLATFORMS.get(plat)
             if not spec:
@@ -347,13 +371,16 @@ class ApifyProvider:
             try:
                 r = requests.post(
                     f"{API}/{actor}/run-sync-get-dataset-items",
-                    params={"timeout": TIMEOUT, "memory": 1024, "limit": per},
+                    # Run options: maxItems = platform-enforced record cap,
+                    # timeout = kill a scrape that runs too long, limit = items returned.
+                    params={"timeout": actor_timeout, "memory": 1024,
+                            "maxItems": max_items, "limit": per},
+                    # Actor INPUT cap, per the live schemas: maximumJobs (naukri) /
+                    # count (linkedin) / maxItemsPerSearch (indeed) — set to `per`.
                     json=spec["input"](titles, query.location, per),
-                    headers=headers, timeout=TIMEOUT + 40)
+                    headers=headers, timeout=actor_timeout + 40)
                 if r.status_code >= 300:
-                    # The trigger we must never guess wrong: out-of-credits/quota
-                    # → auto-pause and STOP (the other platforms will fail the
-                    # same way), but do not raise — the run continues ATS-only.
+                    # out-of-credits/quota → auto-pause and STOP, but never raise.
                     if is_credit_or_quota_error(r.status_code, r.text):
                         pause(f"HTTP {r.status_code} on {plat}: {r.text[:120]}")
                         errors.append(f"{plat}: out-of-credits/quota (HTTP {r.status_code}) → Apify auto-paused")
@@ -366,14 +393,31 @@ class ApifyProvider:
                         jp = spec["map"](it)
                         if jp and jp.title:
                             out.append(jp)
+                if len(out) >= max_items:        # global record cap reached → stop early
+                    break
             except requests.Timeout:
                 timeouts += 1
                 errors.append(f"{plat} ({actor}): timeout")
             except Exception as e:
                 errors.append(f"{plat} ({actor}): {e}")
 
-        # Repeated timeouts across platforms → treat the channel as unavailable
-        # and pause so future runs don't keep hanging. A single timeout is logged.
+        elapsed = time.monotonic() - t0
+
+        # ── AFTER: re-read usage, log spend, warn + persist if over budget. ──
+        _, _, remaining_after = probe(token)
+        if remaining_before is not None and remaining_after is not None:
+            spent = max(0.0, remaining_before - remaining_after)
+            print(f"  Apify spent ~${spent:.3f} this run ({len(out)} items, {elapsed:.0f}s)", file=sys.stderr)
+            if spent > effective_budget:
+                note = (f"Apify OVER budget: spent ${spent:.3f} > effective ${effective_budget:.2f} "
+                        f"({len(out)} items, {elapsed:.0f}s)")
+                print("⚠ " + note, file=sys.stderr)
+                state.write("apify_overspend", {"note": note, "at": datetime.now(timezone.utc).isoformat()})
+        else:
+            print(f"  Apify run done ({len(out)} items, {elapsed:.0f}s); spend not readable from API",
+                  file=sys.stderr)
+
+        # Repeated timeouts across platforms → pause so future runs don't hang.
         if timeouts >= 2:
             pause(f"repeated timeouts ({timeouts} platforms)")
             errors.append("repeated timeouts → Apify auto-paused")

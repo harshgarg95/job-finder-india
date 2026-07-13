@@ -30,3 +30,13 @@ scoring:
 discovery:
   # Max results requested per discovery channel before dedup/prescreen.
   limit_per_channel: 60
+
+# Apify SPEND-SAFETY. The channel already auto-pauses when your credits run out;
+# these additionally bound the COST of any run that DOES scrape, so a single run
+# can never drain your balance. Safe defaults (shown) are used if this block is
+# absent. (Apify-native: max_items → run maxItems + each actor's own cap;
+# actor_timeout_s → run timeout that kills a scrape that runs too long.)
+apify:
+  max_spend_usd_per_run: 0.50     # hard ceiling on credits a single run may spend
+  max_items: 200                  # hard cap on records pulled this run
+  actor_timeout_s: 300            # kill any single actor run exceeding this (seconds)

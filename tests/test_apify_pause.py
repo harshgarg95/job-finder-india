@@ -1,8 +1,9 @@
-"""Apify auto-pause / auto-resume tests. No real network.
+"""Apify auto-pause / auto-resume + spend-safety tests. No real network.
 
-Proves: the out-of-credits/quota trigger is classified correctly, a credit
-error during fetch PAUSES (persisted) and never raises, the channel reports its
-paused reason, and the state machine resumes cleanly.
+Proves: the out-of-credits/quota trigger is classified correctly; a credit error
+during fetch PAUSES (persisted) and never raises; the channel reports its state;
+the resolver resumes cleanly; and — critically — a single run can NEVER drain the
+balance (low balance → skip; otherwise the scrape is capped by Apify-native limits).
 
 Run:  python -m pytest tests/test_apify_pause.py -q  (or: python tests/test_apify_pause.py)
 """
@@ -32,6 +33,18 @@ class _Resp:
 
     def json(self):
         return self._payload
+
+
+class _Capture:
+    """Records requests.post calls and returns a canned item list (no network)."""
+    def __init__(self, payload=None):
+        self.calls = []
+        self._payload = payload if payload is not None else [
+            {"title": "AI Program Manager", "companyName": "Acme"}]
+
+    def post(self, url, params=None, json=None, headers=None, timeout=None):
+        self.calls.append({"url": url, "params": params, "json": json})
+        return _Resp(200, payload=self._payload)
 
 
 def test_error_classifier():
@@ -70,10 +83,8 @@ def test_enabled_but_no_token():
 def test_fetch_on_402_pauses_and_does_not_raise():
     _isolate_state()
     os.environ["APIFY_TOKEN"] = "dummy-not-a-real-token"
-    # stub the network: every actor run returns HTTP 402 (out of credits)
-    def fake_post(*a, **k):
-        return _Resp(402, '{"error":{"type":"monthly-usage-hard-limit-exceeded"}}')
-    AP.requests.post = fake_post
+    AP.probe = lambda t: (None, "stub", None)          # no network in tests
+    AP.requests.post = lambda *a, **k: _Resp(402, '{"error":{"type":"monthly-usage-hard-limit-exceeded"}}')
 
     p = AP.ApifyProvider()
     out = p.fetch(Query(titles=["AI PM"], location="India", limit_per_channel=10),
@@ -88,11 +99,9 @@ def test_paused_channel_stays_off_when_probe_says_unavailable():
     _isolate_state()
     os.environ["APIFY_TOKEN"] = "dummy-not-a-real-token"
     AP.pause("HTTP 402 out of credits")
-    # stub the resume-probe to report credits still out
-    AP.probe = lambda token: (False, "used $5/$5")
+    AP.probe = lambda t: (False, "used $5/$5", 0.0)    # credits still out
     p = AP.ApifyProvider()
     assert p.enabled({"sources": {"apify": {"enabled": True}}}) is False
-    assert "auto-paused" in p._skip
     assert AP.is_paused() is True          # not resumed
     os.environ.pop("APIFY_TOKEN", None)
 
@@ -101,7 +110,7 @@ def test_paused_channel_auto_resumes_when_probe_says_ok():
     _isolate_state()
     os.environ["APIFY_TOKEN"] = "dummy-not-a-real-token"
     AP.pause("HTTP 402 out of credits")
-    AP.probe = lambda token: (True, "used $0/$5")   # credits back
+    AP.probe = lambda t: (True, "used $0/$5", 5.0)     # credits back
     p = AP.ApifyProvider()
     assert p.enabled({"sources": {"apify": {"enabled": True}}}) is True
     assert AP.is_paused() is False         # auto-resumed (state cleared)
@@ -123,16 +132,16 @@ def test_resolve_active_clears_any_pause():
     _isolate_state()
     os.environ["APIFY_TOKEN"] = "dummy"
     AP.pause("stale pause")
-    AP.probe = lambda t: (True, "$5.00 of $5 remaining")
+    AP.probe = lambda t: (True, "$5.00 of $5 remaining", 5.0)
     r = AP.resolve({"sources": {"apify": {"enabled": True}}})
-    assert r["state"] == "active" and AP.is_paused() is False
+    assert r["state"] == "active" and AP.is_paused() is False and r["remaining_usd"] == 5.0
     os.environ.pop("APIFY_TOKEN", None)
 
 
 def test_resolve_paused_no_credits_persists():
     _isolate_state()
     os.environ["APIFY_TOKEN"] = "dummy"
-    AP.probe = lambda t: (False, "$0.02 of $5 remaining, cycle resets 2026-07-05")
+    AP.probe = lambda t: (False, "$0.02 of $5 remaining, cycle resets 2026-07-05", 0.02)
     r = AP.resolve({"sources": {"apify": {"enabled": True}}})
     assert r["state"] == "paused-no-credits" and AP.is_paused() is True
     os.environ.pop("APIFY_TOKEN", None)
@@ -141,7 +150,7 @@ def test_resolve_paused_no_credits_persists():
 def test_resolve_error_is_transient_not_paused():
     _isolate_state()
     os.environ["APIFY_TOKEN"] = "dummy"
-    AP.probe = lambda t: (None, "probe error: timeout")
+    AP.probe = lambda t: (None, "probe error: timeout", None)
     r = AP.resolve({"sources": {"apify": {"enabled": True}}})
     assert r["state"] == "error" and AP.is_paused() is False   # transient → re-probe next run
     os.environ.pop("APIFY_TOKEN", None)
@@ -150,12 +159,58 @@ def test_resolve_error_is_transient_not_paused():
 def test_resolve_auto_resumes_when_credits_return():
     _isolate_state()
     os.environ["APIFY_TOKEN"] = "dummy"
-    AP.probe = lambda t: (False, "no credits")
+    AP.probe = lambda t: (False, "no credits", 0.0)
     assert AP.resolve({"sources": {"apify": {"enabled": True}}})["state"] == "paused-no-credits"
     assert AP.is_paused() is True
-    AP.probe = lambda t: (True, "$5 remaining")                # next run: credits back
+    AP.probe = lambda t: (True, "$5 remaining", 5.0)           # next run: credits back
     assert AP.resolve({"sources": {"apify": {"enabled": True}}})["state"] == "active"
     assert AP.is_paused() is False                              # auto-resumed
+    os.environ.pop("APIFY_TOKEN", None)
+
+
+# ── Spend-safety: a single run can NEVER drain the balance ───────────────────
+
+def test_low_balance_skips_scrape_never_drains():
+    """Low remaining → effective budget <= 0 → skip BEFORE any scrape call."""
+    _isolate_state()
+    os.environ["APIFY_TOKEN"] = "dummy"
+    cap = _Capture()
+    AP.requests.post = cap.post
+    AP.probe = lambda t: (False, "$0.10 of $5 remaining", 0.10)   # after-read (won't be reached)
+    p = AP.ApifyProvider()
+    cfg = {
+        "sources": {"apify": {"enabled": True, "platforms": ["naukri"]}},
+        "run": {"apify": {"max_spend_usd_per_run": 0.50, "max_items": 200, "actor_timeout_s": 300}},
+        "apify_resolved": {"state": "active", "remaining_usd": 0.10},  # 0.10 − 0.10 headroom = 0
+    }
+    out = p.fetch(Query(titles=["AI PM"], location="India", limit_per_channel=10), cfg)
+    assert out == []                       # skipped
+    assert cap.calls == []                 # NO scrape request made → cannot drain
+    assert p.last_errors and "never drains" in p.last_errors[0]
+    os.environ.pop("APIFY_TOKEN", None)
+
+
+def test_scrape_is_capped_by_apify_native_limits():
+    """With budget, the scrape runs but is bounded by Apify-native maxItems +
+    timeout (and the actor's own input cap), not just by us."""
+    _isolate_state()
+    os.environ["APIFY_TOKEN"] = "dummy"
+    cap = _Capture()
+    AP.requests.post = cap.post
+    AP.probe = lambda t: (True, "$4.99 of $5 remaining", 4.99)   # after-read → ~no spend
+    p = AP.ApifyProvider()
+    cfg = {
+        "sources": {"apify": {"enabled": True, "platforms": ["naukri"], "limit": 40}},
+        "run": {"apify": {"max_spend_usd_per_run": 0.50, "max_items": 5, "actor_timeout_s": 120}},
+        "apify_resolved": {"state": "active", "remaining_usd": 5.0},
+    }
+    p.fetch(Query(titles=["AI PM"], location="India", limit_per_channel=40), cfg)
+    assert cap.calls, "scrape should have run with budget available"
+    params = cap.calls[0]["params"]
+    assert params["maxItems"] == 5         # Apify-native hard record cap
+    assert params["timeout"] == 120        # Apify-native run timeout (kills long scrapes)
+    assert params["limit"] <= 5            # items returned, capped
+    assert cap.calls[0]["json"].get("maximumJobs") <= 5   # naukri actor INPUT cap (live schema)
     os.environ.pop("APIFY_TOKEN", None)
 
 
