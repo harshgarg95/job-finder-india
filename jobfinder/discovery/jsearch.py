@@ -6,20 +6,19 @@ Adzuna comes back thin (the registry's gap-fill gate) — because its free tier 
 scarcer than Adzuna's. Off unless JSEARCH_API_KEY is set.
 
 Two hosts (config/sources.yml → jsearch.host):
-  • "rapidapi"    → https://jsearch.p.rapidapi.com/search
+  • "rapidapi"    → https://jsearch.p.rapidapi.com/search-v2
                     headers: X-RapidAPI-Key, X-RapidAPI-Host: jsearch.p.rapidapi.com
-  • "openwebninja"→ https://api.openwebninja.com/jsearch/search  (direct portal)
+  • "openwebninja"→ https://api.openwebninja.com/jsearch/search-v2  (direct portal)
                     header: X-API-Key
 
-VERIFIED live on 2026-07-11 (RapidAPI host): the key reaches the JSearch backend
-and the free tier is **200 requests/month** (X-RateLimit-Requests-Limit: 200).
+VERIFIED live on 2026-07-11 (RapidAPI host, JSearch **v5**): the endpoint is
+`GET /search-v2` — v5 renamed it from `/search` (which now 404s). Free tier is
+**200 requests/month** (X-RateLimit-Requests-Limit). The v5 response wraps the
+jobs: `data` is `{"jobs": [...], "cursor": "..."}`, so the list is `data["jobs"]`;
+each job's fields are exactly as mapped below (confirmed against a real 200).
 
-⚠ SUCCESS-SHAPE PENDING LIVE VERIFICATION. On the key we tested, `/search` 404s
-at the RapidAPI proxy ("Endpoint '/search' does not exist") — the subscribed
-JSearch listing doesn't expose it. The field map below follows JSearch's public
-docs; it is CONFIRMED the moment `/search` returns 200. Until then `fetch()`
-self-skips on any non-200 (guard) so no unverified data ever enters the funnel —
-the run degrades to Adzuna + ATS. It NEVER hard-fails.
+`fetch()` still self-skips on any non-200 (guard), so a future API change degrades
+to Adzuna + ATS rather than feeding bad data. It NEVER hard-fails.
 
 Quota-safe (quota.py): per-run request cap + persisted monthly counter; 429 →
 auto-pause for the month.
@@ -43,14 +42,26 @@ DEFAULT_TRIGGER_BELOW = 40         # only fill in when Adzuna returns < this man
 
 _HOSTS = {
     "rapidapi": {
-        "url": "https://jsearch.p.rapidapi.com/search",
+        "url": "https://jsearch.p.rapidapi.com/search-v2",     # v5 endpoint (was /search)
         "headers": lambda key: {"X-RapidAPI-Key": key, "X-RapidAPI-Host": "jsearch.p.rapidapi.com"},
     },
     "openwebninja": {
-        "url": "https://api.openwebninja.com/jsearch/search",
+        "url": "https://api.openwebninja.com/jsearch/search-v2",   # direct portal (unverified path)
         "headers": lambda key: {"X-API-Key": key},
     },
 }
+
+
+def _jobs_from(payload: dict) -> list:
+    """Extract the jobs list. JSearch v5 (/search-v2) nests them under
+    data["jobs"] (data is {"jobs": [...], "cursor": "..."}); older shapes put a
+    bare list directly under data. Handle both so a host/version change is safe."""
+    data = (payload or {}).get("data")
+    if isinstance(data, dict):
+        return data.get("jobs") or []
+    if isinstance(data, list):
+        return data
+    return []
 
 
 def _budget(cfg: dict) -> dict:
@@ -71,10 +82,8 @@ def _host(cfg: dict) -> dict:
 
 
 def _map(j: dict) -> JobPosting:
-    """Field map per JSearch public docs — PENDING LIVE VERIFICATION (see module
-    docstring). Confirmed the moment /search returns 200 on the subscription."""
+    """Field map for a JSearch v5 job — VERIFIED against a real /search-v2 200."""
     loc = ", ".join(x for x in (j.get("job_city"), j.get("job_state"), j.get("job_country")) if x)
-    smin, smax = j.get("job_min_salary"), j.get("job_max_salary")
     return JobPosting(
         title=j.get("job_title", "") or "",
         company=j.get("employer_name", "") or "",
@@ -82,8 +91,8 @@ def _map(j: dict) -> JobPosting:
         url=j.get("job_apply_link", "") or "",
         location=loc,
         description=j.get("job_description", "") or "",
-        salary_min=smin, salary_max=smax,
-        salary_currency=j.get("job_salary_currency"),
+        salary_min=j.get("job_min_salary"), salary_max=j.get("job_max_salary"),
+        salary_text=j.get("job_salary_string"),        # v5: formatted string (no separate currency field)
         employment_type=j.get("job_employment_type"),
         remote="remote" if j.get("job_is_remote") else None,
         posted_at=(j.get("job_posted_at_datetime_utc") or "")[:10] or None,
@@ -127,7 +136,7 @@ class JSearchProvider:
             if made >= per_run or quota.exhausted(CHANNEL, cap):
                 break
             q = f"{title} in {query.location}".strip() if query.location else title
-            params = {"query": q, "page": "1", "num_pages": "1", "date_posted": "month"}
+            params = {"query": q, "num_pages": "1", "date_posted": "month"}   # v5: cursor-based, no page
             if country:
                 params["country"] = country
             try:
@@ -139,12 +148,11 @@ class JSearchProvider:
                         quota.mark_exhausted(CHANNEL, cap)
                         errors.append(f"quota/rate limit (HTTP {r.status_code}) → paused for the month")
                         break
-                    # GUARD: any other non-200 (incl. the current /search 404) → skip
-                    # this channel for the run; the field map is not yet live-verified.
-                    errors.append(f"HTTP {r.status_code} {r.text[:100]} "
-                                  "(JSearch /search not returning 200 — mapping unverified; skipping)")
+                    # GUARD: any other non-200 → skip this channel for the run rather
+                    # than feed a shape we didn't get a clean 200 for. Never hard-fails.
+                    errors.append(f"HTTP {r.status_code} {r.text[:120]} (non-200 → skipping JSearch this run)")
                     break
-                for j in (r.json().get("data") or []):
+                for j in _jobs_from(r.json()):
                     jp = _map(j)
                     if jp.title:
                         out.append(jp)

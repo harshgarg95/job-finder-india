@@ -148,29 +148,54 @@ def test_adzuna_429_pauses_and_never_raises():
 
 
 # ── JSearch (guarded; success shape pending live verification) ───────────────
-def test_jsearch_map_documented_shape():
+def test_jsearch_map_verified_v5_shape():
     j = JS._map({"job_title": "AI Manager", "employer_name": "Acme",
                  "job_apply_link": "https://acme.com/jobs/1", "job_city": "Bengaluru",
                  "job_state": "KA", "job_country": "IN", "job_description": "...",
                  "job_is_remote": True, "job_posted_at_datetime_utc": "2026-07-01T00:00:00Z",
-                 "job_employment_type": "FULLTIME"})
+                 "job_employment_type": "Full-time", "job_salary_string": "₹20L–₹30L a year"})
     assert j.title == "AI Manager" and j.company == "Acme" and j.source == "jsearch"
     assert j.location == "Bengaluru, KA, IN" and j.remote == "remote"
-    assert j.posted_at == "2026-07-01"
-    print("✓ JSearch documented field map")
+    assert j.posted_at == "2026-07-01" and j.salary_text == "₹20L–₹30L a year"
+    print("✓ JSearch v5 field map")
+
+
+def test_jsearch_jobs_from_v5_and_legacy():
+    # v5: data is {"jobs":[...], "cursor":...}
+    assert JS._jobs_from({"data": {"jobs": [{"job_title": "x"}], "cursor": "c"}}) == [{"job_title": "x"}]
+    # legacy: data is a bare list
+    assert JS._jobs_from({"data": [{"job_title": "y"}]}) == [{"job_title": "y"}]
+    assert JS._jobs_from({"status": "OK"}) == []       # missing → empty, never raises
+    print("✓ _jobs_from unwraps v5 data.jobs and legacy list shapes")
+
+
+def test_jsearch_v2_success_parses_jobs():
+    _isolate_state()
+    os.environ["JSEARCH_API_KEY"] = "k"
+    payload = {"status": "OK", "data": {"cursor": "abc", "jobs": [
+        {"job_title": "AI Delivery Manager", "employer_name": "Acme",
+         "job_apply_link": "https://acme/1", "job_city": "Pune", "job_country": "IN"},
+        {"job_title": "", "employer_name": "Skip"}]}}     # blank title dropped
+    JS.requests = _FakeRequests([_Resp(200, payload=payload)])
+    cfg = {"sources": {"jsearch": {"enabled": True, "host": "rapidapi"}},
+           "run": {"discovery": {"jsearch": {"max_requests_per_run": 1, "monthly_cap": 200}}}}
+    jobs = JS.JSearchProvider().fetch(Query(titles=["a"], location="India"), cfg)
+    assert len(jobs) == 1 and jobs[0].title == "AI Delivery Manager" and jobs[0].source == "jsearch"
+    assert "/search-v2" in JS.requests.calls[0]["url"]      # hits the v5 endpoint
+    print("✓ JSearch v5 /search-v2 200 → parses data.jobs into JobPostings")
 
 
 def test_jsearch_404_guard_skips_no_raise():
     _isolate_state()
     os.environ["JSEARCH_API_KEY"] = "k"
-    JS.requests = _FakeRequests([_Resp(404, text="Endpoint '/search' does not exist")])
+    JS.requests = _FakeRequests([_Resp(404, text="Endpoint does not exist")])
     cfg = {"sources": {"jsearch": {"enabled": True, "host": "rapidapi"}},
            "run": {"discovery": {"jsearch": {"max_requests_per_run": 3, "monthly_cap": 200}}}}
     p = JS.JSearchProvider()
     jobs = p.fetch(Query(titles=["a"], location="India"), cfg)
-    assert jobs == []                                  # guard: no unverified data enters
-    assert p.last_errors and "unverified" in p.last_errors[0]
-    print("✓ JSearch non-200 guard → skips cleanly, no unverified data, no raise")
+    assert jobs == []                                  # guard: non-200 → nothing enters
+    assert p.last_errors and "skipping" in p.last_errors[0].lower()
+    print("✓ JSearch non-200 guard → skips cleanly, no raise")
 
 
 # ── registry gap-fill: JSearch spent only when Adzuna is thin ────────────────
