@@ -28,10 +28,23 @@ On the first request, run:
 ```bash
 python -m jobfinder doctor --json
 ```
-Parse the JSON. If `needs_onboarding` is true (a required file is missing), **go
-to `modes/onboarding.md` and refuse `evaluate`/`scan`** until these exist:
-`resume.md`, `config/profile.yml`, `config/sources.yml`. (LLM choice + login are
-implicit — the user already opened their CLI.)
+Parse the JSON. If `needs_onboarding` is true (a required file is missing, or
+`config/profile.yml` is empty/placeholder), **go to `modes/onboarding.md` and refuse
+`evaluate`/`scan`** until these exist and are filled: `resume.md`, a non-empty
+`config/profile.yml`, `config/sources.yml`. (LLM choice + login are implicit — the user
+already opened their CLI.)
+
+When `needs_onboarding` is true, present **ONLY this restricted menu** — do **not** show the
+command-center Find-jobs / Scan options, and offer **no** "continue anyway" / score-without-a-
+résumé path (there is none):
+```
+job-finder-india — a quick setup is needed first. Reply with the number:
+  1. Start onboarding (recommended)
+  2. Help — what onboarding collects and why
+```
+Routing: **1** → `modes/onboarding.md` · **2** → explain, then show this menu again. A run
+**cannot** proceed to `evaluate` / `scan` while `doctor` reports `needs_onboarding` — re-run
+`doctor --json` after onboarding and continue only once `needs_onboarding` is false.
 
 ## Model check — do this on your first message
 Scoring is done **by you, in-session**, so **your model matters.** If you are running as a
@@ -55,9 +68,10 @@ Offer to continue anyway if they insist, but say the scoring may be less reliabl
 
 Always read `modes/_shared.md` before `evaluate`/`scan` — it loads the scoring law.
 
-## Command center — show this whenever the user is ambiguous or just started
-Print this numbered menu and tell them to reply with a number (free text also works;
-see the choice convention in `modes/_shared.md`):
+## Command center — show this when the user is ambiguous or just started AND setup is complete
+(Only when `doctor` reports **not** `needs_onboarding`. If `needs_onboarding`, show the restricted
+cold-start-gate menu above instead — never the Find-jobs / Scan options.) Print this numbered menu
+and tell them to reply with a number (free text also works; see the convention in `modes/_shared.md`):
 ```
 job-finder-india — what would you like to do? Reply with a number:
   1. Find jobs        — discover → prescreen → score → honest top-N

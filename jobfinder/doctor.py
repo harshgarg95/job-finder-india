@@ -17,6 +17,8 @@ import shutil
 import subprocess
 import sys
 
+import yaml
+
 from . import cli_adapter
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -40,6 +42,27 @@ def _first_existing(candidates: list[str]) -> str | None:
         if os.path.exists(os.path.join(ROOT, rel)):
             return rel
     return None
+
+
+def _profile_ready(rel_path: str) -> bool:
+    """A profile.yml counts as 'present' only if it's non-empty, non-placeholder,
+    and carries the required [GATE] fields — so a seeded-but-unfilled template
+    still blocks evaluate/scan (onboarding must actually write it from answers)."""
+    try:
+        d = yaml.safe_load(open(os.path.join(ROOT, rel_path), encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001
+        return False
+    if not isinstance(d, dict) or not d:
+        return False
+    if (d.get("candidate") or {}).get("full_name") in (None, "", "Your Name"):
+        return False
+    if not (d.get("seniority") or {}).get("honest_ceiling"):
+        return False
+    if not (d.get("target_roles") or {}).get("primary"):
+        return False
+    if not (d.get("location") or {}).get("base_city"):
+        return False
+    return True
 
 
 def detect_ollama() -> dict:
@@ -68,6 +91,9 @@ def check() -> dict:
         found = _first_existing(cands)
         files[key] = found
         if not found:
+            missing_required.append(key)
+        elif key == "profile" and not _profile_ready(found):
+            # exists but empty / still the placeholder template / missing [GATE] fields
             missing_required.append(key)
 
     missing_recommended: list[str] = []

@@ -12,6 +12,8 @@ config/_profile.md
 config/preferences.yml
 data/*
 !data/.gitkeep
+# onboarding answers may hold résumé text + PII — never commit (also deleted post-write)
+_onboard_answers.json
 resume.txt
 resume.md
 resume.docx
