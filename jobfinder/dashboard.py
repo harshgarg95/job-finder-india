@@ -1,12 +1,15 @@
-"""Local dashboard/tracker — review the honest shortlist and capture corrections.
+"""Local results dashboard — the deterministic, model-independent review surface.
 
+The agent-driven feedback review can be skipped by weak models; this replaces it.
 Runs a tiny localhost HTTP server (Python stdlib, no extra dependency, bound to
-127.0.0.1 — data never leaves your machine). It shows the APPLY/STRETCH shortlist
-(DON'T-APPLY hidden behind a toggle), and turns one-click calls — Applied, or
-Wouldn't apply (+reason) — into persistent feedback (data/feedback.*) that the
-scorer replays next run. Latest choice per job wins; every call is undoable.
+127.0.0.1 — data never leaves your machine). It renders the run the same honest way
+top.md does — ✅ APPLY/STRETCH first, then ⚠️ Couldn't-verify (with reason), then
+Prescreen-filtered (rank + deterministic reason) — with a funnel + wall-clock +
+free-tier quota strip on top. Each job's Applied / Interested / Not-suitable(+reason)
+buttons write through the EXISTING feedback.record() store (the one preferences.yml
+derives from and prescreen replays next run) — no new store, no duplicate logic.
 
-    python -m jobfinder dashboard           # opens http://127.0.0.1:8755
+    python -m jobfinder dashboard           # opens http://127.0.0.1:8755, Ctrl-C to stop
 """
 
 from __future__ import annotations
@@ -19,31 +22,107 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from . import feedback
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RESULTS = os.path.join(ROOT, "data", "results", "scored.jsonl")
+RESULTS_DIR = os.path.join(ROOT, "data", "results")
 
 
-def _load_jobs() -> list[dict]:
-    if not os.path.exists(RESULTS):
+def _p(name: str) -> str:
+    return os.path.join(RESULTS_DIR, name)
+
+
+def _read_jsonl(path: str) -> list[dict]:
+    if not os.path.exists(path):
         return []
-    jobs = []
-    for ln in open(RESULTS, encoding="utf-8"):
+    out = []
+    for ln in open(path, encoding="utf-8"):
         ln = ln.strip()
-        if ln:
-            try:
-                jobs.append(json.loads(ln))
-            except json.JSONDecodeError:
-                continue
-
-    def fit(j):
+        if not ln:
+            continue
         try:
-            return float(j.get("fit_score", 0))
-        except (TypeError, ValueError):
-            return 0.0
-    jobs.sort(key=fit, reverse=True)
-    return jobs
+            out.append(json.loads(ln))
+        except json.JSONDecodeError:
+            continue
+    return out
 
 
-PAGE = """<!doctype html><html lang=en><head><meta charset=utf-8>
+def _fit(j: dict) -> float:
+    try:
+        return float(j.get("fit_score", 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _run_cfg() -> dict:
+    try:
+        import yaml
+        return yaml.safe_load(open(os.path.join(ROOT, "config", "run.yml"), encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001 — dashboard is read-only; a missing/broken run.yml just means no quota line
+        return {}
+
+
+def _quota() -> dict:
+    """Per-channel free-tier remaining this month (live, from the persisted counter)."""
+    try:
+        from .discovery import quota
+    except Exception:  # noqa: BLE001
+        return {}
+    disc = (_run_cfg().get("discovery") or {})
+    out = {}
+    for ch, default_cap in (("adzuna", 250), ("jsearch", 200)):
+        cap = int((disc.get(ch, {}) or {}).get("monthly_cap", default_cap))
+        used = quota.used_this_month(ch)
+        out[ch] = {"used": used, "remaining": max(0, cap - used), "cap": cap}
+    return out
+
+
+def _elapsed_secs() -> int | None:
+    """Run wall-clock ≈ scored.jsonl mtime − run start (deterministic, no new store)."""
+    try:
+        from datetime import datetime, timezone
+        from . import state
+        started = state.read("run_timing").get("started_at")
+        sp = _p("scored.jsonl")
+        if not started or not os.path.exists(sp):
+            return None
+        end = datetime.fromtimestamp(os.path.getmtime(sp), tz=timezone.utc)
+        return max(0, int((end - datetime.fromisoformat(started)).total_seconds()))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _load_run() -> dict:
+    """Assemble the whole run for the page, mirroring top.md's honest sections."""
+    rows = _read_jsonl(_p("scored.jsonl"))
+    verdicts = sorted((r for r in rows if not r.get("unverifiable")), key=_fit, reverse=True)
+    couldnt = [r for r in rows if r.get("unverifiable")]
+    scored_ids = {r.get("job_id") for r in rows}                     # verdicts + unverifiable both count
+    fs_n = int((_run_cfg().get("scoring") or {}).get("full_score_top_n", 15))
+
+    prescreen_filtered = []
+    for rank, j in enumerate(_read_jsonl(_p("prescreened.jsonl")), 1):
+        if (j.get("id") or j.get("job_id")) in scored_ids:
+            continue
+        prescreen_filtered.append({
+            "rank": rank, "title": j.get("title"), "company": j.get("company"),
+            "location": j.get("location"), "url": j.get("url"),
+            "link_verified": j.get("link_verified"), "link_source": j.get("link_source"),
+            "reason": f"passed prescreen; rank #{rank} > top-{fs_n} cutoff — not scored",
+        })
+
+    rep = {}
+    if os.path.exists(_p("prescreen_report.json")):
+        try:
+            rep = json.load(open(_p("prescreen_report.json"), encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            rep = {}
+    funnel = {"candidates": rep.get("input"), "prescreened": rep.get("kept"),
+              "scored": len(verdicts), "truncated_from": rep.get("truncated_from")}
+
+    return {"jobs": verdicts, "couldnt_verify": couldnt, "prescreen_filtered": prescreen_filtered,
+            "funnel": funnel, "quota": _quota(), "elapsed_secs": _elapsed_secs(),
+            "stats": feedback.stats()}
+
+
+PAGE = r"""<!doctype html><html lang=en><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
 <title>Job Finder India — honest shortlist</title>
 <style>
@@ -52,26 +131,31 @@ PAGE = """<!doctype html><html lang=en><head><meta charset=utf-8>
  *{box-sizing:border-box}
  body{margin:0;background:var(--bg);color:var(--fg);
    font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
- header{padding:22px 28px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;
+ header{padding:22px 28px 16px;border-bottom:1px solid var(--line);position:sticky;top:0;
    background:rgba(14,16,20,.92);backdrop-filter:blur(6px);z-index:5}
  h1{margin:0;font-size:18px;font-weight:600;letter-spacing:.2px}
- .sub{color:var(--mut);font-size:12.5px;margin-top:5px;display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+ .sub{color:var(--mut);font-size:12.5px;margin-top:6px;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+ .funnel{color:var(--mut);font-size:12px;margin-top:8px;display:flex;gap:16px;flex-wrap:wrap}
+ .funnel b{color:var(--fg)}
  .pill{padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:600}
  .p-apply{background:#11331f;color:var(--met)} .p-stretch{background:#33290d;color:var(--part)}
- .p-dont{background:#331515;color:var(--miss)}
+ .p-dont{background:#331515;color:var(--miss)} .p-cv{background:#332a0d;color:var(--part)}
  .wrap{max-width:860px;margin:0 auto;padding:20px 24px 70px}
+ h2.sec{font-size:14px;font-weight:600;margin:28px 0 2px}
  .job{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin:14px 0}
+ .job.cv{border-color:#3a3416}
  .row1{display:flex;gap:14px;align-items:center}
  .score{font-size:26px;font-weight:700;min-width:50px;text-align:center;line-height:1}
  .score small{display:block;font-size:10px;color:var(--mut);font-weight:500;margin-top:3px}
- .s-apply{color:var(--met)} .s-stretch{color:var(--part)} .s-dont{color:var(--miss)}
+ .s-apply{color:var(--met)} .s-stretch{color:var(--part)} .s-dont{color:var(--miss)} .s-cv{color:var(--part);font-size:20px}
  .ttl{font-size:15px;font-weight:600} .meta{color:var(--mut);font-size:12.5px;margin-top:3px}
+ .cvreason{color:var(--part);font-size:12.5px;margin-top:5px}
  .vsrc{border:1px solid var(--line);border-radius:6px;padding:0 6px;margin-left:4px;font-size:11px;color:var(--mut)}
  ul.why{margin:12px 0 4px;padding-left:18px} ul.why li{margin:3px 0;color:#cfd5e0}
  .quals{margin:12px 0 4px;background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
  .qsum{font-size:12.5px;color:var(--mut);cursor:pointer;list-style:none;outline:none}
  .qsum::-webkit-details-marker{display:none}
- .qsum::before{content:"▸ ";color:var(--mut)} details[open] .qsum::before{content:"▾ "}
+ .qsum::before{content:"\25b8 ";color:var(--mut)} details[open] .qsum::before{content:"\25be "}
  details[open] .qsum{margin-bottom:8px} .hint{color:var(--mut);font-size:11px}
  .cmet{color:var(--met)} .cpart{color:var(--part)} .cmiss{color:var(--miss)}
  .qgrp{margin:6px 0} .qh{font-size:12px;font-weight:600;margin-bottom:2px}
@@ -97,23 +181,26 @@ PAGE = """<!doctype html><html lang=en><head><meta charset=utf-8>
  .toggle{background:none;border:1px dashed var(--line);color:var(--mut);border-radius:8px;
    padding:8px 14px;font-size:12.5px;cursor:pointer;margin:18px 0 4px;width:100%}
  .toggle:hover{border-color:var(--mut);color:var(--fg)}
+ table.pf{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:10px}
+ table.pf th{text-align:left;color:var(--mut);font-weight:500;border-bottom:1px solid var(--line);padding:5px 8px}
+ table.pf td{border-bottom:1px solid var(--line);padding:5px 8px;color:#cfd5e0}
  .empty{color:var(--mut);padding:50px;text-align:center}
 </style></head><body>
 <header><h1>Job Finder India <span style="color:var(--mut);font-weight:400">— honest shortlist</span></h1>
-<div class=sub id=sub>loading…</div></header>
+<div class=sub id=sub>loading…</div><div class=funnel id=funnel></div></header>
 <div class=wrap><div id=list></div><div id=hidden></div></div>
 <script>
-const REASONS=[["wrong_location","Wrong location"],["wrong_level","Wrong level"],
- ["wrong_function","Wrong function"],["wrong_domain","Wrong domain"],
- ["wrong_comp","Comp too low"],["wouldnt_apply","Just passing"]];
+const REASONS=[["wrong_level","Too senior"],["wrong_function","Wrong function"],
+ ["wrong_location","Location"],["wrong_comp","Comp too low"],
+ ["wrong_company","Company"],["wouldnt_apply","Other"]];
 const esc=s=>(s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const vkey=v=>(v||"").startsWith("DON")?"dont":v==="APPLY"?"apply":"stretch";
 const vlabel=v=>(v||"").startsWith("DON")?"DON'T APPLY":v;
 
 function whyBullets(h){
  if(!h) return "";
- let t=h.replace(/^\\s*(APPLY|STRETCH|DON'?T APPLY)\\s*[\\u2014\\-]\\s*/i,"");
- const parts=t.split(/;\\s+|\\s\\u2014\\s/).map(x=>x.trim()).filter(Boolean);
+ let t=h.replace(/^\s*(APPLY|STRETCH|DON'?T APPLY)\s*[—\-]\s*/i,"");
+ const parts=t.split(/;\s+|\s—\s/).map(x=>x.trim()).filter(Boolean);
  return "<ul class=why>"+parts.map(p=>`<li>${esc(p)}</li>`).join("")+"</ul>";
 }
 function qualsBlock(j){
@@ -134,45 +221,52 @@ function skillsLine(j){
  const segs=[seg(s.met,"cmet","✓"),seg(s.partial,"cpart","~"),seg(s.missing,"cmiss","✗")].filter(Boolean);
  return segs.length?`<div class=skills><span class=lbl>Skills (auto-checked):</span> ${segs.join(" &nbsp; ")}</div>`:"";
 }
-function updateSub(d){
+function updateHead(d){
  const fbn=Object.values(d.stats||{}).reduce((a,b)=>a+b,0);
  const n=v=>d.jobs.filter(j=>vkey(j.verdict)===v).length;
  document.getElementById("sub").innerHTML=
    `<span class="pill p-apply">${n("apply")} APPLY</span>`+
    `<span class="pill p-stretch">${n("stretch")} STRETCH</span>`+
-   `<span class="pill p-dont">${n("dont")} filtered out</span>`+
+   `<span class="pill p-dont">${d.jobs.filter(j=>vkey(j.verdict)==="dont").length} filtered out</span>`+
+   (d.couldnt_verify.length?`<span class="pill p-cv">${d.couldnt_verify.length} couldn't verify</span>`:"")+
    `<span>${fbn} call${fbn==1?"":"s"} saved</span>`;
+ const f=d.funnel||{}, q=d.quota||{}, parts=[];
+ if(f.candidates!=null) parts.push(`<span>Funnel: <b>${f.candidates}</b> candidates → <b>${f.prescreened}</b> prescreened → <b>${f.scored}</b> scored</span>`);
+ if(d.elapsed_secs!=null){const m=Math.round(d.elapsed_secs/60);parts.push(`<span>Run took ~<b>${m<1?"<1":m}m</b></span>`);}
+ const qseg=Object.entries(q).map(([k,v])=>`${k} <b>${v.remaining}</b>/${v.cap}`).join(" · ");
+ if(qseg) parts.push(`<span>Free-tier left: ${qseg}</span>`);
+ document.getElementById("funnel").innerHTML=parts.join("");
 }
 async function post(url,j){return (await fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(j)})).json();}
 
+function mkbtn(cls,txt,fn){const b=document.createElement("button");b.className=cls;b.textContent=txt;b.addEventListener("click",fn);return b;}
 function mountActions(card,j){
  const host=card.querySelector(".actionhost"); host.innerHTML="";
  const acts=document.createElement("div"); acts.className="acts";
  acts.innerHTML=`<span class=lbl>Your call:</span>`;
- const applied=document.createElement("button"); applied.className="act good"; applied.textContent="✓ Applied";
- const wont=document.createElement("button"); wont.className="act bad"; wont.textContent="✗ Wouldn't apply";
- acts.append(applied,wont); host.append(acts);
- applied.addEventListener("click",()=>save(card,j,"applied"));
- wont.addEventListener("click",()=>{
+ const applied=mkbtn("act good","✓ Applied",()=>save(card,j,"applied"));
+ const interested=mkbtn("act good","☆ Interested",()=>save(card,j,"interested"));
+ const notsuit=mkbtn("act bad","✗ Not suitable",()=>{
    if(host.querySelector(".reasons")) return;
    const r=document.createElement("div"); r.className="reasons"; r.innerHTML=`<span class=lbl>Reason:</span>`;
-   REASONS.forEach(([a,label])=>{const c=document.createElement("button");c.className="chip";c.textContent=label;
-     c.addEventListener("click",()=>save(card,j,a)); r.append(c);});
+   REASONS.forEach(([a,label])=>r.append(mkbtn("chip",label,()=>save(card,j,a))));
    host.append(r);
  });
+ acts.append(applied,interested,notsuit); host.append(acts);
 }
 async function save(card,j,action){
  await post("/api/feedback",{job_id:j.job_id,company:j.company,title:j.title,url:j.url,action});
  const host=card.querySelector(".actionhost");
- const positive=action==="applied";
+ const positive=action==="applied"||action==="interested";
  const txt=action==="applied"?"tracked as applied — won't be re-recommended"
+   :action==="interested"?"marked interested — stays visible, tilts future scoring"
    :action==="wouldnt_apply"?"passed — won't be re-recommended"
-   :`won't apply (${action.replace("wrong_","wrong ")}) — will retune scoring`;
+   :`not suitable (${action.replace("wrong_","wrong ")}) — will retune scoring`;
  host.innerHTML=`<div class="saved ${positive?'':'neg'}">✓ ${txt}<span class=change>change</span></div>`;
- host.querySelector(".change").addEventListener("click",async()=>{await post("/api/undo",{job_id:j.job_id});mountActions(card,j);refreshSub();});
- refreshSub();
+ host.querySelector(".change").addEventListener("click",async()=>{await post("/api/undo",{job_id:j.job_id});mountActions(card,j);refreshHead();});
+ refreshHead();
 }
-async function refreshSub(){updateSub(await (await fetch("/api/data")).json());}
+async function refreshHead(){updateHead(await (await fetch("/api/data")).json());}
 
 function makeCard(j){
  const vk=vkey(j.verdict);
@@ -193,23 +287,62 @@ function makeCard(j){
  mountActions(el,j);
  return el;
 }
+function makeCVCard(j){
+ const el=document.createElement("div"); el.className="job cv";
+ el.innerHTML=
+   `<div class=row1>
+      <div class="score s-cv">⚠<small>no JD</small></div>
+      <div style="flex:1">
+        <span class="pill p-cv">COULDN'T VERIFY</span>
+        <span class=ttl> ${esc(j.title)}</span>
+        <div class=meta>${esc(j.company)} · ${esc(j.location||"")}</div>
+        <div class=cvreason>${esc(j.reason||"the tool couldn't read a real JD at this link")}</div>
+      </div>
+    </div>
+    ${j.url?`<a class=link href="${esc(j.url)}" target=_blank rel=noopener>open link ↗</a>`:""}
+    <div class=actionhost></div>`;
+ mountActions(el,j);
+ return el;
+}
+function pfTable(rows){
+ return `<table class=pf><thead><tr><th>#</th><th>Title</th><th>Company</th><th>Location</th><th></th></tr></thead><tbody>`+
+   rows.map(j=>`<tr><td>${j.rank}</td><td>${esc(j.title)}</td><td>${esc(j.company)}</td><td>${esc(j.location||"—")}</td>`+
+     `<td>${j.url?`<a class=link href="${esc(j.url)}" target=_blank rel=noopener>open ↗</a>`:""}</td></tr>`).join("")+
+   `</tbody></table><div class=hint style="margin-top:6px">Passed the deterministic prescreen `+
+   `(title-family · seniority · function · location) but ranked below the full-score cutoff — not individually scored.</div>`;
+}
 async function load(){
- const d=await (await fetch("/api/data")).json(); updateSub(d);
+ const d=await (await fetch("/api/data")).json(); updateHead(d);
  const L=document.getElementById("list"), H=document.getElementById("hidden");
  L.innerHTML=""; H.innerHTML="";
- if(!d.jobs.length){L.innerHTML="<div class=empty>No scored results yet. Run a search + scoring first.</div>";return;}
+ if(!d.jobs.length && !d.couldnt_verify.length && !d.prescreen_filtered.length){
+   L.innerHTML="<div class=empty>No scored results yet. Say <b>find me jobs</b> in your CLI to run discovery + scoring, then refresh.</div>";return;}
  const show=d.jobs.filter(j=>vkey(j.verdict)!=="dont");
  const dont=d.jobs.filter(j=>vkey(j.verdict)==="dont");
- if(!show.length) L.innerHTML="<div class=empty>No APPLY/STRETCH roles in this run. Widen discovery, or reveal the filtered-out roles below.</div>";
- show.forEach(j=>L.appendChild(makeCard(j)));
+ if(show.length){L.innerHTML="<h2 class=sec>✅ Worth applying — APPLY / STRETCH</h2>";show.forEach(j=>L.appendChild(makeCard(j)));}
+ else if(d.jobs.length) L.innerHTML="<div class=empty>No APPLY/STRETCH roles in this run — reveal the filtered-out roles below, or widen discovery.</div>";
+ if(d.couldnt_verify.length){
+   const h=document.createElement("h2"); h.className="sec"; h.textContent=`⚠️ Couldn't verify — check manually (${d.couldnt_verify.length})`;
+   L.appendChild(h); d.couldnt_verify.forEach(j=>L.appendChild(makeCVCard(j)));
+ }
  if(dont.length){
    const t=document.createElement("button"); t.className="toggle";
-   t.textContent=`▸ Show ${dont.length} filtered-out roles (DON'T APPLY) — for auditing`;
-   let open=false;
+   const lab=`▸ Show ${dont.length} filtered-out roles (DON'T APPLY) — for auditing`;
+   t.textContent=lab; let open=false;
    t.addEventListener("click",()=>{open=!open;
      if(open){dont.forEach(j=>H.appendChild(makeCard(j)));t.textContent=`▾ Hide ${dont.length} filtered-out roles`;}
-     else{H.innerHTML="";t.textContent=`▸ Show ${dont.length} filtered-out roles (DON'T APPLY) — for auditing`;}});
+     else{H.innerHTML="";t.textContent=lab;}});
    L.appendChild(t);
+ }
+ if(d.prescreen_filtered.length){
+   const box=document.createElement("div");
+   const t=document.createElement("button"); t.className="toggle";
+   const lab=`▸ Show ${d.prescreen_filtered.length} prescreen-filtered (passed the gate, ranked below the scoring cutoff)`;
+   t.textContent=lab; let open=false;
+   t.addEventListener("click",()=>{open=!open;
+     if(open){box.innerHTML=pfTable(d.prescreen_filtered);t.textContent=`▾ Hide prescreen-filtered`;}
+     else{box.innerHTML="";t.textContent=lab;}});
+   L.appendChild(t); L.appendChild(box);
  }
 }
 load();
@@ -232,7 +365,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/" or self.path.startswith("/index"):
             self._send(200, PAGE, "text/html; charset=utf-8")
         elif self.path.startswith("/api/data"):
-            self._send(200, json.dumps({"jobs": _load_jobs(), "stats": feedback.stats()}))
+            self._send(200, json.dumps(_load_run()))
         else:
             self._send(404, json.dumps({"error": "not found"}))
 
@@ -244,7 +377,7 @@ class Handler(BaseHTTPRequestHandler):
                 d = json.loads(body)
                 removed = feedback.undo(d.get("job_id", ""))
                 return self._send(200, json.dumps({"ok": True, "removed": removed}))
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 return self._send(400, json.dumps({"ok": False, "error": str(e)}))
         if not self.path.startswith("/api/feedback"):
             return self._send(404, json.dumps({"error": "not found"}))
@@ -254,7 +387,7 @@ class Handler(BaseHTTPRequestHandler):
                                     d.get("title", ""), d.get("url", ""),
                                     d.get("action", ""), d.get("note", ""))
             self._send(200, json.dumps({"ok": True, "entry": entry}))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             self._send(400, json.dumps({"ok": False, "error": str(e)}))
 
 
@@ -262,12 +395,12 @@ def serve(port: int = 8755, open_browser: bool = True) -> int:
     srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     url = f"http://127.0.0.1:{port}"
     print(f"Job Finder India dashboard → {url}  (local only; Ctrl-C to stop)")
-    if not os.path.exists(RESULTS):
-        print(f"  note: no scored results at {RESULTS} yet — run a search+scoring first.")
+    if not os.path.exists(_p("scored.jsonl")):
+        print("  note: no scored results yet — say 'find me jobs' in your CLI to run discovery + scoring.")
     if open_browser:
         try:
             webbrowser.open(url)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     try:
         srv.serve_forever()

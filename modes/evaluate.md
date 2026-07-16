@@ -140,6 +140,13 @@ host model) in this session. No headless model call.
    >   **4.** Check whether a posting is still live (`python -m jobfinder live <job_id>`)
    >   **5.** Done `← (default)`
 
+**Finally, always point the user to the dashboard for review:** tell them to run
+`python -m jobfinder dashboard` — a local page (127.0.0.1, opens automatically, Ctrl-C to stop) that
+renders this run the same honest way (APPLY/STRETCH · Couldn't-verify · Prescreen-filtered, with the
+funnel + quota) and turns one-click **Applied / Interested / Not-suitable(+reason)** into the same
+feedback store prescreen replays. It is **deterministic and model-independent** — the reliable review
+path when the inline marks above get skipped. The agent points to it; the dashboard does the work.
+
 ## NEVER
 - **Run or search for a `score` / `evaluate` subcommand — it does not exist.** YOU write the
   verdict JSON; `tracker --add` persists it. That is the whole scoring step.
