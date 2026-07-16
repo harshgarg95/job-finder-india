@@ -28,7 +28,7 @@ from . import run as R
 from .dedup import dedupe
 from .discovery import apify
 from .discovery.base import Query
-from .discovery.registry import discover
+from .discovery.registry import discover, discovery_health
 from .filters import keyword_prefilter, location_ok
 from .prescreen import prescreen_set
 from .schema import JobPosting
@@ -88,14 +88,29 @@ def cmd_discover(argv: list[str]) -> int:
     by_source: dict[str, int] = {}
     for j in cand:
         by_source[j.source] = by_source.get(j.source, 0) + 1
-    progress.emit(f"discovery: {sum(r.count for r in reports if r.enabled)} raw → "
-                  f"{len(cand)} candidates")
+    # Discovery health: a network failure makes every channel return 0, which is
+    # NOT the same as "no jobs matched". Surface it loudly + persist so prescreen
+    # (and the agent) never present an all-errored run as an honest empty.
+    health = discovery_health(reports)
+    from . import state
+    state.write("discovery_status", {"failed": health["failed"], "reason": health["reason"],
+                                     "message": health["message"]})
+    if health["failed"]:
+        progress.emit(health["message"])
+    else:
+        progress.emit(f"discovery: {sum(r.count for r in reports if r.enabled)} raw → "
+                      f"{len(cand)} candidates")
+    ch = {c["id"]: c for c in health["channels"]}
+    channels = [{"id": r.id, "enabled": r.enabled, "count": r.count,
+                 "status": ch[r.id]["status"], "reason": ch[r.id]["reason"],
+                 "errors": ch[r.id]["errors"]} for r in reports]
     print(json.dumps({
+        "discovery_status": {"failed": health["failed"], "reason": health["reason"],
+                             "message": health["message"], "ats_errored": health["ats_errored"]},
         "raw": sum(r.count for r in reports if r.enabled),
         "candidates": len(cand),
         "candidates_by_source": by_source,
-        "channels": [{"id": r.id, "enabled": r.enabled, "count": r.count,
-                      "skipped": r.skipped_reason} for r in reports],
+        "channels": channels,
         "apify": cfg["apify_resolved"]["state"],
         "quota_remaining": _quota_summary(run_cfg),
         "candidates_path": path,
@@ -140,7 +155,7 @@ def cmd_prescreen(argv: list[str]) -> int:
          else couldnt_verify).append(rec if vstatus == "ok" else {**rec, "status": vstatus, "reason": vreason})
     score_these = verifiable[:fs_n]
     backfill_pool = verifiable[fs_n:]
-    print(json.dumps({
+    out = {
         "input": rep["input"], "kept": rep["kept"], "cap": rep["cap"],
         "truncated_from": rep["truncated_from"], "by_reason": rep["by_reason"],
         "preferences_applied": bool(prefs),
@@ -159,7 +174,11 @@ def cmd_prescreen(argv: list[str]) -> int:
                  "(e.g. no_jd), record it unverifiable AND pull the next job from `backfill_pool` so you still "
                  "reach the target count. Everything else is auto-listed 'Prescreen-filtered'. Never score "
                  "beyond the prescreened set."),
-    }, ensure_ascii=False, indent=2))
+    }
+    ds = state.read("discovery_status")
+    if ds.get("failed"):            # defense-in-depth: never present a network-failed run as an empty
+        out = {"discovery_status": ds, **out}
+    print(json.dumps(out, ensure_ascii=False, indent=2))
     return 0
 
 

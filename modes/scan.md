@@ -5,8 +5,12 @@ or to sanity-check channel/credit state. This mode never scores.
 
 ## Procedure
 1. **Gate.** `python -m jobfinder doctor --json`. If `needs_onboarding` → `modes/onboarding.md`.
-2. **Discover.** `python -m jobfinder discover --json`. Report:
-   - the funnel `raw → candidates`, the per-channel report, `candidates_by_source`,
+2. **Discover.** `python -m jobfinder discover --json`.
+   - **FIRST check `discovery_status.failed`.** If `true`, discovery BROKE (not empty): relay
+     `discovery_status.message` verbatim and **STOP** — do NOT say "0 candidates" or point at
+     `data/results/top.md` (it's from an earlier run, not this one). Usual cause: no network access
+     (Codex's sandbox blocks network by default — see README). Only continue when it's `false`.
+   - the funnel `raw → candidates`, the per-channel `status` (ok/errored/skipped), `candidates_by_source`,
      and `quota_remaining` (remaining monthly free-tier requests per channel).
    - Channel priority: `ats` = always-on floor; `adzuna` = co-primary India-native;
      `jsearch` = supplement, runs only when Adzuna is thin (else `skipped: adzuna

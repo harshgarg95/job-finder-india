@@ -96,7 +96,7 @@ Routing: **1** → `modes/evaluate.md` · **2** → `modes/scan.md` · **3** →
 |---|---|
 | `python -m jobfinder doctor --json` | setup check (the gate) |
 | `python -m jobfinder onboard --resume-from <path>` / `--seed` | never-overwrite writers |
-| `python -m jobfinder discover --json` | discover + dedup + India/keyword filter → `data/results/candidates.jsonl` |
+| `python -m jobfinder discover --json` | discover + dedup + India/keyword filter → `data/results/candidates.jsonl`. Carries **`discovery_status`**: if `.failed` is true, discovery BROKE (no network / Codex sandbox) — relay `.message`, **STOP**, never report "0 candidates" or point at a stale `top.md` |
 | `python -m jobfinder prescreen --json` | candidates → `data/results/prescreened.jsonl` (**hard cap** `run.yml: max_llm_jobs`) + funnel |
 | `python -m jobfinder enrich <job_id>` | deep-fetch ONE full JD (its `scoring_view`) for in-session scoring |
 | `echo '<verdict json>' \| python -m jobfinder tracker --add -` | register one scored verdict → `data/tracker.md` + `data/results/top.md` |

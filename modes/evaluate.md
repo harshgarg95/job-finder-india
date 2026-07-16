@@ -26,11 +26,18 @@ host model) in this session. No headless model call.
    `python -m jobfinder preferences --context` and hold that block as a **tie-breaker
    for BORDERLINE (≈3.5–4.2) calls only** — it never overrides the rubric or a hard gate.
 3. **Discover.** Say "Running discovery across the ATS floor + Adzuna/JSearch… (~1–2 min)"
-   first, then `python -m jobfinder discover --json`. Report the funnel, per-channel
-   states, `candidates_by_source`, and `quota_remaining` (monthly free-tier left per
-   channel). Adzuna is the co-primary India-native channel; JSearch fills in only when
-   Adzuna is thin (a `skipped: adzuna sufficient` is the quota-saving gap-fill, not an
-   error); Apify deep-mode is off by default; the ATS floor always runs.
+   first, then `python -m jobfinder discover --json`.
+   **FIRST check `discovery_status.failed`.** If it is `true`, discovery BROKE — this is NOT an
+   empty result. Relay `discovery_status.message` verbatim and **STOP**: do NOT prescreen, do NOT
+   score, do NOT say "0 candidates", and do NOT point the user at `data/results/top.md` (it was NOT
+   updated — any file there is from an earlier run, not this one). The usual cause is no network
+   access (e.g. Codex's sandbox blocks network by default — see the README). Only when
+   `discovery_status.failed` is `false` do you continue.
+   Then report the funnel, per-channel `status` (ok/errored/skipped), `candidates_by_source`, and
+   `quota_remaining` (monthly free-tier left per channel). Adzuna is the co-primary India-native
+   channel; JSearch fills in only when Adzuna is thin (a `skipped: adzuna sufficient` is the
+   quota-saving gap-fill, not an error); Apify deep-mode is off by default; the ATS floor always
+   runs. A single channel `errored` while others returned jobs is a quiet degrade — keep going.
 4. **Prescreen (the cap + the full-score cutoff).** Say "Prescreening the candidates down
    to the cap…", then `python -m jobfinder prescreen --json`.
    It returns the bounded, RANKED list (≤ `run.yml: max_llm_jobs`) plus **`score_these`** —

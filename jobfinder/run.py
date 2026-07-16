@@ -173,12 +173,12 @@ def main(argv=None) -> int:
               "(Naukri/LinkedIn/Indeed) is off; running on the free ATS scan only. "
               "(Add APIFY_TOKEN to .env + enable in config/sources.yml to include it.)")
 
-    enabled_channels = [r for r in reports if r.enabled]
-    broke = [r for r in enabled_channels if r.errors and r.count == 0]
+    from .discovery.registry import discovery_health
+    health = discovery_health(reports)
+    if health["failed"]:                              # same verdict + wording as the agent path
+        print("\n" + health["message"])
+        return 2
     if total == 0:
-        if broke:
-            print("\n✗ Every enabled channel errored — this is a BREAKAGE, not an empty result.")
-            return 2
         print("\n• Discovery genuinely returned 0 jobs (no breakage). Try more tenants/keys.")
         return 0
 

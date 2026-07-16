@@ -91,6 +91,19 @@ labels each job with its source channel and prints the remaining monthly quota.
 If a channel returns nothing, job-finder says so plainly. It never fabricates a
 result and never silently degrades.
 
+### Network access (Codex sandbox)
+
+Discovery needs outbound network. Some CLIs sandbox it: **Codex blocks network by
+default**, so every channel fails and discovery returns 0 — which is *not* the same
+as "no jobs matched". job-finder distinguishes the two: it tracks a per-channel
+`ok / errored / skipped` status, and if every channel (or the keyless ATS floor)
+**errored**, `discover --json` sets `discovery_status.failed: true` and surfaces a
+loud message — instead of an innocuous "0 candidates". When that happens, **nothing
+was scored and `data/results/top.md` was NOT updated** (any file there is from an
+earlier run). Fix: grant the CLI network access (in Codex, enable network / run
+outside the sandbox) or check your connection, then re-run. A *single* channel
+erroring while others return jobs just degrades quietly to the others.
+
 ## Run it inside your own AI CLI (prompt-pack — primary mode)
 
 Open this repo in the AI CLI you already use (**Claude Code / Codex / OpenCode /
