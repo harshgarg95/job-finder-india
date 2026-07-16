@@ -23,8 +23,8 @@ Offer only these two (numbered — the user types the number):
 
 `python -m jobfinder onboard` is interactive and needs a real terminal — it **refuses** if launched
 without a TTY (so don't run it yourself from here; it can't read the user's keyboard). Résumé
-options are exactly: **paste (Ctrl-D) · file path · LinkedIn text**. There is **no** template /
-sample profile and **no** score-without-a-résumé path.
+options are exactly: **paste (Ctrl-D or type `END` on its own line) · file path · LinkedIn text**.
+There is **no** template / sample profile and **no** score-without-a-résumé path.
 
 ## Automation fallback (only if the user can't use a terminal, or for scripting)
 You MAY write the files non-interactively — you ask the questions, **Python writes the YAML** (you
@@ -35,6 +35,29 @@ onsite_cities[] (required unless remote), floor_ctc_lpa`, plus `resume_text` **o
 It validates the required fields (refusing a partial write, and a résumé under ~300 chars), writes
 both files, then **deletes the answers file** (PII). This is the fallback, **not** the primary path.
 
-## After setup
+## After setup — refine target roles (recommended, agent-side)
+Once `config/profile.yml` exists, do this ONCE before the first run. It is an **ENHANCEMENT, not a
+gate** — if the user skips it or you're a weak model, the résumé-derived roles stand and the run
+still works. **Why it matters:** prescreen is keyword-driven, so `config/profile.yml: target_roles`
+decides which jobs enter the funnel *at all*. The regex writer can only lift PRINTED designations —
+it may keep a résumé header (e.g. "Project Coordination & Operations") and miss roles the person
+should actually target. You can infer better from the real experience; a regex can't.
+
+1. **Read** `resume.md` + `config/profile.yml` (note its current `target_roles.primary`).
+2. **Propose 3–5 realistic target roles** grounded in what the résumé shows the person has *done* —
+   not just their printed titles (e.g. AI Delivery Manager, Implementation Consultant, Technical
+   Program Manager, Solutions Consultant). **FLAG any role the résumé does not support** instead of
+   silently accepting it — advisory, not a block: *"your résumé shows no aviation experience, so
+   'Pilot' would return jobs that all score DON'T APPLY — keep it anyway?"* The user decides.
+3. Show the proposal as a **numbered confirm/edit** list (they reply with a number, or edit it).
+4. On accept, WRITE it (Python patches the profile in place — you NEVER hand-edit YAML):
+   ```
+   python -m jobfinder onboard --set target_roles="AI Delivery Manager,Implementation Consultant,Technical Program Manager"
+   ```
+   `--set` updates ONLY `target_roles` (and mirrors `function.in_scope`, which prescreen reads);
+   every other field is preserved. The same `--set` can correct a mis-answered field without redoing
+   onboarding — `work_mode`, `honest_ceiling`, `base_city`, `floor_ctc_lpa` (unknown keys are refused).
+
+## Then
 Re-run `python -m jobfinder doctor --json`, confirm `profile` is gone from `missing_required`, then
 show the **command-center** menu (numbered) or tell them to say **"find me jobs."** `.env` stays theirs.

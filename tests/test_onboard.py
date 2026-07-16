@@ -333,6 +333,55 @@ def test_agents_gate_routes_to_terminal_no_bypass():
     print("✓ AGENTS.md gate routes to direct-run onboard; no-bypass + no-hand-edit stated")
 
 
+def test_paste_end_sentinel_terminates_and_echoes():
+    import builtins
+    import contextlib
+    import io
+    lines = iter(["Résumé line 1", "Résumé line 2", "END", "PAST-END must NOT be read"])
+    saved = builtins.input
+    builtins.input = lambda *a: next(lines)
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            text = onboard._read_pasted()
+    finally:
+        builtins.input = saved
+    assert text == "Résumé line 1\nRésumé line 2"       # stopped at END; nothing past it consumed
+    assert "read 2 lines" in buf.getvalue()             # receipt echo so the paste visibly registered
+    print("✓ paste: END sentinel terminates capture + echoes 'read N lines'")
+
+
+def test_validate_rejects_impossible_years():
+    assert any("can't exceed" in p for p in onboard.validate_answers({"years_total": 5, "years_in_function": 8}))
+    assert any("between 0 and 45" in p for p in onboard.validate_answers({"years_total": 60}))
+    assert any("between 0 and 45" in p for p in onboard.validate_answers({"years_in_function": -3}))
+    assert onboard.validate_answers({"years_total": 8, "years_in_function": 3}) == []   # sane → ok
+    print("✓ validate rejects years_in_function>years_total and out-of-range years")
+
+
+def test_set_target_roles_patches_profile_in_place():
+    d = _root()
+    onboard.write_from_answers(_full_answers(work_mode="onsite", onsite_cities=["Hyderabad"]), force=True)
+    before = yaml.safe_load(open(os.path.join(d, "config", "profile.yml"), encoding="utf-8"))
+    roles = ["AI Delivery Manager", "Implementation Consultant", "Technical Program Manager"]
+    rc = onboard.cmd(["--set", "target_roles=" + ",".join(roles)])
+    assert rc == 0
+    after = yaml.safe_load(open(os.path.join(d, "config", "profile.yml"), encoding="utf-8"))
+    assert after["target_roles"]["primary"] == roles
+    assert after["function"]["in_scope"] == roles                       # mirror → reaches prescreen
+    # everything else preserved (NOT regenerated to defaults)
+    assert after["candidate"]["full_name"] == before["candidate"]["full_name"] == "Harsh Garg"
+    assert after["location"]["remote_ok"] is False                      # onsite work-mode preserved
+    assert after["seniority"]["honest_ceiling"] == before["seniority"]["honest_ceiling"]
+    # work_mode patch flips the [GATE] flags without touching relocate
+    rc2 = onboard.cmd(["--set", "work_mode=remote"])
+    after2 = yaml.safe_load(open(os.path.join(d, "config", "profile.yml"), encoding="utf-8"))
+    assert rc2 == 0 and after2["location"]["remote_ok"] is True and after2["location"]["hybrid_ok"] is True
+    assert after2["location"]["willing_to_relocate"] == before["location"]["willing_to_relocate"]
+    assert onboard.cmd(["--set", "nickname=HG"]) == 1                   # unknown key refused
+    print("✓ --set patches target_roles/work_mode in place, preserves the rest, refuses unknown keys")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

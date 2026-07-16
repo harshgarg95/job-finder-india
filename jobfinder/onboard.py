@@ -123,6 +123,14 @@ def validate_answers(a: dict) -> list[str]:
     for k in ("years_total", "years_in_function", "floor_ctc_lpa"):
         if a.get(k) is not None and str(a.get(k)).strip() != "" and _num(a.get(k)) is None:
             errs.append(f"invalid number: {k}")
+    # factual sanity — these numbers feed the seniority gate, so a wrong value silently
+    # breaks scoring. Cheap deterministic checks: plausible range + no impossibility.
+    yt, yf = _num(a.get("years_total")), _num(a.get("years_in_function"))
+    for name, val in (("years_total", yt), ("years_in_function", yf)):
+        if val is not None and not (0 <= val <= 45):
+            errs.append(f"{name} must be between 0 and 45 (got {val})")
+    if yt is not None and yf is not None and yf > yt:
+        errs.append(f"years_in_function ({yf:g}) can't exceed years_total ({yt:g})")
     return errs
 
 
@@ -230,6 +238,58 @@ def write_from_answers(answers: dict, force: bool = False) -> dict:
         return {"error": str(e)}
     wrote.append(os.path.relpath(p, ROOT))
     return {"wrote": wrote}
+
+
+# Top-level profile fields that may be UPDATED in place after setup (e.g. the agent
+# proposing better target_roles). Anything else requires re-running onboarding.
+_PATCHABLE = ("target_roles", "honest_ceiling", "base_city", "floor_ctc_lpa", "work_mode")
+
+
+def patch_profile(updates: dict) -> dict:
+    """Surgically update whitelisted fields in an EXISTING config/profile.yml, leaving
+    everything else exactly as written (name, relocate, curated function.out_of_scope …).
+    This is the post-setup refinement path — NOT a regeneration from flat answers (which
+    would default-fill the untouched fields). Unknown keys are refused with a clear
+    message. work_mode maps to the [GATE] remote_ok/hybrid_ok flags (relocate untouched)."""
+    dest = os.path.join(ROOT, "config", "profile.yml")
+    if not os.path.exists(dest) or _profile_is_placeholder(dest):
+        return {"error": "no real config/profile.yml to update — run onboarding first"}
+    unknown = [k for k in updates if k not in _PATCHABLE]
+    if unknown:
+        return {"error": f"--set {', '.join(unknown)} not supported for in-place update "
+                         f"(patchable: {', '.join(_PATCHABLE)}); re-run onboarding for other fields"}
+    prof = yaml.safe_load(open(dest, encoding="utf-8")) or {}
+    applied: dict = {}
+    for k, v in updates.items():
+        if k == "target_roles":
+            roles = [str(r).strip() for r in (v if isinstance(v, list) else _split(str(v))) if str(r).strip()]
+            prof.setdefault("target_roles", {})["primary"] = roles
+            prof["target_roles"]["archetypes"] = [{"name": r, "fit": "primary"} for r in roles]
+            prof.setdefault("function", {})["in_scope"] = list(roles)   # mirror → reaches prescreen
+            applied["target_roles"] = roles
+        elif k == "honest_ceiling":
+            if str(v).lower() not in _CEILINGS:
+                return {"error": f"honest_ceiling must be one of {sorted(_CEILINGS)}"}
+            prof.setdefault("seniority", {})["honest_ceiling"] = str(v).lower()
+            applied["honest_ceiling"] = str(v).lower()
+        elif k == "base_city":
+            prof.setdefault("location", {})["base_city"] = str(v).strip()
+            applied["base_city"] = str(v).strip()
+        elif k == "floor_ctc_lpa":
+            prof.setdefault("compensation", {})["floor_ctc_lpa"] = _num(v)
+            applied["floor_ctc_lpa"] = _num(v)
+        elif k == "work_mode":
+            if str(v).lower() not in _WORK_MODES:
+                return {"error": f"work_mode must be one of {sorted(_WORK_MODES)}"}
+            loc = prof.setdefault("location", {})
+            loc["remote_ok"] = str(v).lower() != "onsite"    # onsite → both False; else both True
+            loc["hybrid_ok"] = str(v).lower() != "onsite"    # relocate (willing_to_relocate) untouched
+            applied["work_mode"] = str(v).lower()
+    with open(dest, "w", encoding="utf-8") as f:
+        f.write("# job-finder profile (User Layer — written by onboarding from your answers).\n"
+                "# [GATE] fields feed the disqualifier checks in prompts/_rubric.md.\n\n")
+        yaml.safe_dump(prof, f, sort_keys=False, allow_unicode=True)
+    return {"updated": applied}
 
 
 def set_run_cli(cli: str) -> None:
@@ -437,13 +497,22 @@ def _select(question: str, choices: list[str], default: str | None = None) -> st
 
 
 def _read_pasted() -> str:
+    """Read a pasted block until EOF (Ctrl-D at line start) OR a lone `END` line.
+    The END sentinel spares the user the 'Ctrl-D only signals EOF at line start'
+    dance (needing Enter-then-Ctrl-D, sometimes twice). Echoes a receipt so the
+    user can see the paste registered."""
     buf = []
     while True:
         try:
-            buf.append(input())
+            line = input()
         except EOFError:
             break
-    return "\n".join(buf)
+        if line.strip().upper() == "END":        # explicit terminator — no Ctrl-D needed
+            break
+        buf.append(line)
+    text = "\n".join(buf)
+    print(f"✓ read {len(buf)} lines ({len(text.split())} words)")
+    return text
 
 
 def _ask_resume() -> dict:
@@ -451,8 +520,8 @@ def _ask_resume() -> dict:
     idx = _RESUME_CHOICES.index(choice)
     if idx == 1:                               # file path
         return {"resume_path": _input("Résumé file path: ")}
-    print("Paste your résumé now, then press Ctrl-D:" if idx == 0
-          else "Paste your LinkedIn profile text now, then press Ctrl-D:")
+    what = "résumé" if idx == 0 else "LinkedIn profile text"
+    print(f"Paste your {what}, then press Enter and Ctrl-D (or type END on its own line):")
     return {"resume_text": _read_pasted()}
 
 
@@ -531,6 +600,11 @@ def _refill(a: dict, res: dict) -> None:
         a["target_roles"] = _split(_input("Target roles (comma-separated, optional): "))
     if "work_mode" in t or "onsite_cities" in t:
         _ask_workmode(a)
+    if "years" in t:                          # factual years problem → re-ask both (skippable)
+        yt = _input("Years of total experience (optional, Enter to skip): ")
+        yf = _input("Years in your target function (optional, Enter to skip): ")
+        a["years_total"] = _num(yt) if yt else None
+        a["years_in_function"] = _num(yf) if yf else None
 
 
 def _interactive() -> int:
@@ -562,9 +636,10 @@ def _interactive() -> int:
             if attempt < 2:
                 print("Let's fix that.\n")
                 _refill(a, res)
-        else:                                  # 3 tries exhausted → the résumé never became usable
-            print("\n✗ Couldn't get a usable résumé after 3 tries. Re-run "
-                  "`python -m jobfinder onboard` when you have the text or file ready.")
+        else:                                  # 3 tries exhausted (bad résumé, or a value never fixed)
+            detail = "; ".join(res.get("problems", [])) or res.get("error", "setup incomplete")
+            print(f"\n✗ Couldn't complete setup after 3 tries ({detail}). Re-run "
+                  "`python -m jobfinder onboard` when ready.")
             return 1
     except (KeyboardInterrupt, EOFError):
         print("\n(cancelled — nothing written)")
@@ -610,6 +685,16 @@ def cmd(argv: list[str]) -> int:
     if a.resume_from:
         print(f"resume -> {import_resume(a.resume_from, force=a.force)}")
         did = True
+    if a.set and not a.answers:
+        # POST-SETUP refinement: --set alone patches the EXISTING profile in place
+        # (e.g. the agent proposing better target_roles) — never regenerates it.
+        updates = {}
+        for kv in a.set:
+            k, _, v = kv.partition("=")
+            updates[k.strip()] = _coerce(v)
+        res = patch_profile(updates)
+        print(json.dumps(res, ensure_ascii=False))
+        return 1 if res.get("error") else 0
     if a.answers or a.set:
         answers: dict = {}
         if a.answers:
