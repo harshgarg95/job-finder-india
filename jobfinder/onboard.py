@@ -102,28 +102,21 @@ def _num(v):
 def validate_answers(a: dict) -> list[str]:
     """Return a list of problems with the answers (empty = valid).
 
-    STRICTLY required (the loop-until-valid set): `work_mode` (+ `onsite_cities`
-    when hybrid/onsite/mix) and a non-empty `target_roles` — the one thing a
-    résumé can't decide plus the one satisfied by the résumé-derived suggestion.
-    Everything else (name / city / years / ceiling / comp floor) is derived-with-
-    default or optional: onboarding never blocks on it, and _answers_to_profile
-    fills a safe, doctor-ready fallback. Fields that ARE supplied are still format-
-    checked (so the --answers automation path can't write a broken value)."""
+    NOTHING is strictly required anymore — every dimension is skippable and
+    _answers_to_profile fills a safe, doctor-ready default (work_mode→mix,
+    honest_ceiling→mid, name/city→derived, target_roles→empty is fine: the rubric
+    scores against `function.*` + the résumé, not target_roles). The résumé itself
+    is still required, but that is enforced in write_from_answers, not here. This
+    function only FORMAT-checks values that ARE supplied, so the --answers
+    automation path can't write a malformed value (bad number, unknown enum)."""
     errs: list[str] = []
 
     roles = a.get("target_roles")
-    if not roles or (isinstance(roles, list) and not roles):
-        errs.append("missing required: target_roles")
-    elif not isinstance(roles, list):
+    if roles is not None and not isinstance(roles, list):
         errs.append("target_roles must be a list of role titles")
-
-    wm = str(a.get("work_mode", "")).lower()
-    if wm not in _WORK_MODES:
+    wm = a.get("work_mode")
+    if wm is not None and str(wm).strip() and str(wm).lower() not in _WORK_MODES:
         errs.append(f"work_mode must be one of {sorted(_WORK_MODES)}")
-    elif wm in ("hybrid", "onsite", "mix") and not (a.get("onsite_cities") or []):
-        errs.append(f"onsite_cities is required when work_mode is '{wm}'")
-
-    # format-only guards for OPTIONAL fields — flagged only when actually supplied
     hc = a.get("honest_ceiling")
     if hc is not None and str(hc).strip() and str(hc).lower() not in _CEILINGS:
         errs.append(f"honest_ceiling must be one of {sorted(_CEILINGS)}")
@@ -163,7 +156,8 @@ def _answers_to_profile(a: dict) -> dict:
                       "honest_ceiling": str(a.get("honest_ceiling") or "mid").lower(),
                       "honest_ceiling_ic": str(a.get("honest_ceiling_ic") or "mid").lower()},
         "function": {"actual": a.get("function_actual")
-                     or ("Delivery / implementation / program management across: " + ", ".join(roles[:3])),
+                     or ("Delivery / implementation / program management"
+                         + (f" across: {', '.join(roles[:3])}" if roles else " (see résumé)")),
                      "in_scope": a.get("function_in_scope") or list(roles),
                      "out_of_scope": a.get("function_out_of_scope") or list(_DEFAULT_OUT_OF_SCOPE)},
         "target_roles": {"primary": list(roles),
@@ -294,6 +288,38 @@ _INDIAN_CITIES = (
 )
 _NAME_BLOCK = {"curriculum vitae", "resume", "résumé", "cv", "profile", "summary",
                "biodata", "bio data", "contact", "objective"}
+_MONTHS = ("january", "february", "march", "april", "may", "june", "july", "august",
+           "september", "october", "november", "december",
+           "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec")
+_MONTH_RE = r"\b(?:" + "|".join(_MONTHS) + r")\b"
+_YEAR_RE = r"\b(?:19|20)\d{2}\b"
+# Connective/prose markers a real job TITLE never contains — reject sentence fragments.
+_ROLE_STOP = (" and ", " with ", " the ", " across ", " that ", " into ", " using ", " for the ")
+_EDU_WORDS = ("bachelor", "master", "b.arch", "b.tech", "m.tech", "b.e.", "m.e.", "mba",
+              "ph.d", "phd", "diploma", "degree", "university", "institute", "college")
+
+
+def _clean_role(seg: str) -> str | None:
+    """Reduce ONE header/segment to a clean role phrase, or None. Cuts trailing
+    company/date noise at the first hard boundary (tab / 2+ spaces / bullet / ':' /
+    ',' / spaced-dash / month / 4-digit year), then REJECTS anything that isn't a
+    short title: too long/short, >6 words, a sentence fragment (connective words),
+    an education line, or still carrying a date. Silent-wrong is worse than absent."""
+    seg = re.split(r"\t| {2,}|[•·]|:|,| [-–—] ", seg)[0]              # first hard boundary
+    seg = re.split(_MONTH_RE + "|" + _YEAR_RE, seg, flags=re.I)[0]    # drop a date onward
+    seg = seg.strip(" \t-–—|,:•·/()").strip()
+    low = seg.lower()
+    if not (3 <= len(seg) <= 45) or len(seg.split()) > 6:
+        return None
+    if any(s in f" {low} " for s in _ROLE_STOP):                     # prose, not a title
+        return None
+    if any(e in low for e in _EDU_WORDS):                            # a degree line, not a role
+        return None
+    if re.search(_YEAR_RE, seg) or re.search(_MONTH_RE, low):        # a date survived → reject
+        return None
+    if not any(k in low for k in _ROLE_KEYWORDS):                    # no role-family word left
+        return None
+    return seg
 
 
 def _ceiling_from_years(years) -> str:
@@ -344,27 +370,35 @@ def _parse_resume_fields(text: str) -> dict:
             if "base_city" in out:
                 break
 
-        yr = r"(?:19[89]\d|20[0-4]\d)"           # years_total: span of work-history date RANGES
-        ranges = re.findall(rf"({yr})\s*(?:-|–|—|to)\s*({yr}|present|current|now)", text or "", re.I)
-        starts = [int(a) for a, _ in ranges]
-        ends = [datetime.date.today().year if not b.isdigit() else int(b) for _, b in ranges]
-        allyrs = [int(y) for y in re.findall(rf"\b{yr}\b", text or "")]
-        lo = min(starts) if starts else (min(allyrs) if allyrs else None)
-        hi = max(ends) if ends else (max(allyrs) if allyrs else None)
-        if lo and hi and 0 < hi - lo <= 45:
-            out["years_total"] = hi - lo
+        # years_total: FULL career span — earliest year → latest end (Present → today),
+        # not a single job's range (which undercounted). Sanity-capped ≤ 45.
+        yrs = [int(y) for y in re.findall(r"\b(?:19[89]\d|20[0-4]\d)\b", text or "")]
+        if yrs:
+            present = re.search(r"\b(?:present|current|till date|to date|ongoing|now)\b", text or "", re.I)
+            hi = datetime.date.today().year if present else max(yrs)
+            span = hi - min(yrs)
+            if 0 < span <= 45:
+                out["years_total"] = span
 
-        roles: list[str] = []                    # target_roles: recent distinct title-ish lines
-        for ln in nonempty:
+        # target_roles: clean, distinct title phrases. Consider a line only if it's in
+        # the header (top 3) OR is a dated experience line — this skips summary prose,
+        # competency lists, and bullet fragments. SPLIT pipe/slash headers into multiple
+        # roles ("AI Solutions Consultant | Business Analyst" → both), then _clean_role.
+        roles: list[str] = []
+        for idx, ln in enumerate(nonempty):
             low = ln.lower()
-            if 3 <= len(ln) <= 60 and "@" not in ln and any(k in low for k in _ROLE_KEYWORDS):
-                title = re.split(r"[|•·—–,@]|\s-\s", ln)[0].strip()
-                if title and title.lower() not in [r.lower() for r in roles]:
-                    roles.append(title)
-            if len(roles) >= 3:
+            if "@" in ln or not (3 <= len(ln) <= 120) or not any(k in low for k in _ROLE_KEYWORDS):
+                continue
+            if idx >= 3 and not re.search(_MONTH_RE + "|" + _YEAR_RE, ln, re.I):
+                continue                          # not a header line and not dated → not a title line
+            for seg in re.split(r"\s*\|\s*|\s+/\s+", ln):
+                r = _clean_role(seg)
+                if r and r.lower() not in [x.lower() for x in roles]:
+                    roles.append(r)
+            if len(roles) >= 4:
                 break
         if roles:
-            out["target_roles"] = roles
+            out["target_roles"] = roles[:4]
     except Exception:                            # noqa: BLE001 — derivation is best-effort, never fatal
         return out
     return out
@@ -390,13 +424,16 @@ def _select(question: str, choices: list[str], default: str | None = None) -> st
         print(question)
         for i, c in enumerate(choices, 1):
             print(f"   {i}. {c}")
-        while True:
-            v = _input("Reply with the number: ")
+        for _ in range(5):                       # retry cap — never loop forever on bad/absent input
+            v = _input(f"Reply with the number{' (Enter = default)' if default else ''}: ")
+            if not v and default:                # a bare Enter accepts the default
+                return default
             if v.isdigit() and 1 <= int(v) <= len(choices):
                 return choices[int(v) - 1]
             if v in choices:
                 return v
             print("   (pick a number from the list)")
+        return default or choices[0]             # give up cleanly after the cap → default / first
 
 
 def _read_pasted() -> str:
@@ -446,8 +483,8 @@ def _collect_answers() -> dict:
     a["email"] = _ask_default("Email", parsed.get("email", ""))
     a["base_city"] = _ask_default("Base city", parsed.get("base_city", ""))
     shown = ", ".join(parsed.get("target_roles") or [])
-    raw = _input(f"Target roles (comma-separated) [{shown}]: " if shown
-                 else "Target roles (comma-separated): ")
+    raw = _input(f"Target roles (comma-separated, optional) [{shown}]: " if shown
+                 else "Target roles (comma-separated, optional — Enter to skip): ")
     a["target_roles"] = _split(raw) if raw else list(parsed.get("target_roles") or [])
     yt = _ask_default("Years of experience",
                       str(parsed["years_total"]) if parsed.get("years_total") else "")
@@ -456,9 +493,11 @@ def _collect_answers() -> dict:
     yf = _input("Years in your target function (optional, Enter to skip): ")
     if yf:
         a["years_in_function"] = _num(yf)
-    a["honest_ceiling"] = _select(
+    ceiling = _select(
         "Honest ceiling (highest level you can credibly claim today):",
-        _CEILING_CHOICES, default=_ceiling_from_years(a.get("years_total"))).lower()
+        _CEILING_CHOICES + ["Skip / Not sure"],
+        default=_ceiling_from_years(a.get("years_total")))
+    a["honest_ceiling"] = "mid" if ceiling.lower().startswith("skip") else ceiling.lower()
 
     # The few things a résumé can't decide — the ONLY strictly-required asks ──
     print("\nNow the few things your résumé can't tell me:")
@@ -478,17 +517,18 @@ def _collect_answers() -> dict:
     return a
 
 
-def _refill(a: dict, problems: list[str]) -> None:
-    """Re-ask ONLY the strictly-required fields the validator can flag
-    (loop-until-valid): the résumé itself, target_roles, and work-mode (+ on-site
-    city). Name / years / ceiling / comp are never required, so never re-asked."""
-    t = " ".join(problems).lower()
+def _refill(a: dict, res: dict) -> None:
+    """Re-ask only what the last write flagged. Reads BOTH the error string and the
+    problems list — a résumé failure carries an `error` but no `problems`, so
+    keying on problems alone would re-ask nothing and spin. The résumé is the only
+    thing that can persistently fail now (everything else is optional/defaulted)."""
+    t = (res.get("error", "") + " " + " ".join(res.get("problems", []))).lower()
     if "résumé" in t or "resume" in t:
         a.pop("resume_text", None)
         a.pop("resume_path", None)
         a.update(_ask_resume())
     if "target_roles" in t:
-        a["target_roles"] = _split(_input("Target roles (comma-separated): "))
+        a["target_roles"] = _split(_input("Target roles (comma-separated, optional): "))
     if "work_mode" in t or "onsite_cities" in t:
         _ask_workmode(a)
 
@@ -512,15 +552,20 @@ def _interactive() -> int:
     seed_config_files(skip=("config/profile.yml",))   # config defaults; profile comes from answers
     try:
         a = _collect_answers()
-        while True:                            # loop-until-valid: cannot finish without required fields
+        for attempt in range(3):               # retry CAP — a bad résumé can never loop forever
             res = write_from_answers(a, force=True)
             if not res.get("error"):
                 break
             print(f"\n✗ {res['error']}")
             for pr in res.get("problems", []):
                 print(f"   - {pr}")
-            print("Let's fix that.\n")
-            _refill(a, res.get("problems", []))
+            if attempt < 2:
+                print("Let's fix that.\n")
+                _refill(a, res)
+        else:                                  # 3 tries exhausted → the résumé never became usable
+            print("\n✗ Couldn't get a usable résumé after 3 tries. Re-run "
+                  "`python -m jobfinder onboard` when you have the text or file ready.")
+            return 1
     except (KeyboardInterrupt, EOFError):
         print("\n(cancelled — nothing written)")
         return 1

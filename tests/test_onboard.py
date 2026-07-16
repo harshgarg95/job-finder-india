@@ -67,21 +67,23 @@ def test_work_mode_maps_to_gate_location():
     print("✓ work_mode → remote_ok / hybrid_ok / onsite_cities [GATE] mapping")
 
 
-def test_validate_only_requires_workmode_and_roles():
+def test_validate_nothing_required_except_resume():
     d = _root()
-    res = onboard.write_from_answers({"full_name": "X"})     # no work_mode, no target_roles
-    assert res.get("error") and res.get("problems")
-    assert any("target_roles" in p for p in res["problems"])
-    assert any("work_mode" in p for p in res["problems"])
-    # everything else is derived-with-default / optional — NOT a validation failure
-    assert not any("floor_ctc_lpa" in p for p in res["problems"])   # comp floor optional now
-    assert not any("full_name" in p for p in res["problems"])       # name derived/optional
-    assert not any("years" in p for p in res["problems"])           # years optional
-    assert not any("honest_ceiling" in p for p in res["problems"])  # ceiling defaulted
-    assert not os.path.exists(os.path.join(d, "config", "profile.yml"))   # nothing written
-    r2 = onboard.write_from_answers(_full_answers(work_mode="onsite"))     # onsite w/o cities
-    assert r2.get("error") and any("onsite_cities" in p for p in r2["problems"])
-    print("✓ only work-mode + target_roles required; name/years/floor optional; onsite needs a city")
+    # NOTHING is strictly required now — an empty answers dict is valid
+    assert onboard.validate_answers({}) == []
+    assert onboard.validate_answers({"work_mode": "onsite"}) == []      # onsite no longer forces a city
+    # only MALFORMED supplied values are flagged (format-only guard)
+    assert any("work_mode" in p for p in onboard.validate_answers({"work_mode": "bogus"}))
+    assert any("honest_ceiling" in p for p in onboard.validate_answers({"honest_ceiling": "wizard"}))
+    assert any("floor_ctc_lpa" in p for p in onboard.validate_answers({"floor_ctc_lpa": "lots"}))
+    # a résumé ALONE writes a full profile — no roles / work-mode / ceiling needed
+    res = onboard.write_from_answers({"resume_text": "x" * 400})
+    assert "error" not in res and os.path.exists(os.path.join(d, "config", "profile.yml"))
+    # but the résumé itself is still required
+    _root()
+    r2 = onboard.write_from_answers({"target_roles": ["PM"]})           # no résumé, no resume.md
+    assert r2.get("error") and "résumé" in r2["error"].lower()
+    print("✓ nothing required but the résumé; only malformed supplied values are flagged")
 
 
 def test_resume_too_short_is_rejected():
@@ -157,22 +159,105 @@ def test_direct_run_writes_valid_profile_and_resume():
     print("✓ direct-run onboard writes a valid profile.yml + resume.md (arrow-select flow)")
 
 
-def test_direct_run_loops_until_required_present():
+def test_retry_cap_on_bad_resume_no_infinite_loop():
+    _root()
+    calls = {"paste": 0}
+    saved = (onboard._select, onboard._input, onboard._read_pasted)
+    orig = sys.stdin
+
+    def paste():
+        calls["paste"] += 1
+        return "too short"                        # < MIN_RESUME_CHARS every time → never usable
+
+    onboard._select = lambda q, choices, default=None: (
+        onboard._RESUME_CHOICES[0] if "résumé" in q.lower() else (default or choices[0]))
+    onboard._input = lambda p, default="": default
+    onboard._read_pasted = paste
+    try:
+        sys.stdin = type("F", (), {"isatty": lambda s: True})()
+        rc = onboard._interactive()
+    finally:
+        onboard._select, onboard._input, onboard._read_pasted = saved
+        sys.stdin = orig
+    assert rc == 1                                # exits cleanly — did NOT loop forever
+    assert calls["paste"] == 3                    # collect(1) + 2 refills, then capped — bounded
+    print("✓ retry cap: a persistently-bad résumé exits after 3 tries (no infinite loop)")
+
+
+def test_parse_cleanliness_pipe_split_and_full_span_years():
+    text = ("HARSH GARG\n"
+            "AI Solutions Consultant | Business Analyst\n"
+            "Hyderabad, India | h@example.com\n"
+            "PROFESSIONAL EXPERIENCE\n"
+            "Project Manager\tSeptember 2016 – December 2024\n"
+            "Acme Corp | Hyderabad\n"
+            "Business Analyst   May 2016 - August 2019\n"
+            "• Led delivery and stakeholder management across teams.\n")
+    p = onboard._parse_resume_fields(text)
+    roles = p.get("target_roles") or []
+    assert "AI Solutions Consultant" in roles and "Business Analyst" in roles   # pipe header → BOTH
+    assert "Project Manager" in roles
+    import re as _re
+    months = _re.compile(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)", _re.I)
+    for r in roles:
+        assert "\t" not in r and "|" not in r
+        assert not _re.search(r"\d", r), r         # no dates/years leaked into a role
+        assert not months.search(r), r             # no month names leaked in
+    assert p["years_total"] == 8                   # full span 2016 → 2024 (closed range, deterministic)
+    assert not any(r.lower().startswith("led ") for r in roles)   # a bullet is not a role
+    print("✓ parser: pipe-split header roles, clean phrases, full-span years=8")
+
+
+def test_all_skipped_run_writes_safe_defaults():
     d = _root()
-    calls = {"roles": 0}
+    resume = ("Asha Rao\nAI Consultant | Business Analyst\nPune, India | a@example.com\n"
+              "AI Consultant  Jan 2018 - Present\n" + "Delivery and stakeholder work. " * 10)
+    saved = (onboard._select, onboard._input, onboard._read_pasted)
+    orig = sys.stdin
 
-    def input_fn(p, default=""):
-        if "target roles" in p.lower():
-            calls["roles"] += 1
-            return default if calls["roles"] == 1 else "AI PM"   # empty(→[]) first pass → re-asked
-        return default                                            # accept derived defaults / skip optionals
+    def sel(q, choices, default=None):
+        ql = q.lower()
+        if "résumé" in ql:
+            return onboard._RESUME_CHOICES[0]
+        if "ceiling" in ql:
+            return "Skip / Not sure"              # the new explicit skip option → mid
+        return default or choices[0]
 
-    rc = _run_direct({"résumé": onboard._RESUME_CHOICES[0], "ceiling": "Mid",
-                      "work-mode": "Remote", "relocat": "No"}, input_fn, resume="y" * 400)
-    assert rc == 0 and calls["roles"] >= 2                  # re-asked the missing target_roles, then wrote
+    onboard._select = sel
+    onboard._input = lambda p, default="": default        # Enter on every prompt
+    onboard._read_pasted = lambda: resume
+    try:
+        sys.stdin = type("F", (), {"isatty": lambda s: True})()
+        rc = onboard._interactive()
+    finally:
+        onboard._select, onboard._input, onboard._read_pasted = saved
+        sys.stdin = orig
+    assert rc == 0
     prof = yaml.safe_load(open(os.path.join(d, "config", "profile.yml"), encoding="utf-8"))
-    assert prof["target_roles"]["primary"] == ["AI PM"]
-    print("✓ direct-run loops until required fields present (re-asks target_roles, then writes)")
+    assert prof["seniority"]["honest_ceiling"] == "mid"                    # Skip / Not sure → mid
+    assert prof["location"]["remote_ok"] and prof["location"]["hybrid_ok"]  # work-mode default = mix
+    assert prof["location"]["willing_to_relocate"] is False                # relocate default = No
+    assert prof["compensation"]["floor_ctc_lpa"] is None                    # comp skipped → no gate
+    assert prof["candidate"]["full_name"] == "Asha Rao"                     # derived, Enter-accepted
+    assert doctor._profile_ready(os.path.join("config", "profile.yml"))
+    print("✓ all-skipped run writes a valid profile with safe defaults (ceiling=mid, mix, no comp)")
+
+
+def test_empty_target_roles_safe_end_to_end():
+    d = _root()
+    res = onboard.write_from_answers({"resume_text": "z" * 400})   # nothing parses → empty roles
+    assert "error" not in res
+    prof = yaml.safe_load(open(os.path.join(d, "config", "profile.yml"), encoding="utf-8"))
+    assert prof["target_roles"]["primary"] == []                  # empty is allowed
+    assert prof["function"]["out_of_scope"]                       # wrong-function cap still has fuel
+    assert doctor._profile_ready(os.path.join("config", "profile.yml"))   # READY with empty roles
+    from jobfinder.prescreen import prescreen_set
+    from jobfinder.schema import JobPosting
+    jobs = [JobPosting(title="Business Analyst", company="C", source="ats", location="Hyderabad, India"),
+            JobPosting(title="AI Program Manager", company="C", source="ats", location="Remote, India")]
+    kept, rep = prescreen_set(jobs, prof, {"prescreen": {"max_llm_jobs": 40}})
+    assert isinstance(kept, list) and rep["input"] == 2           # prescreen runs, no crash
+    print("✓ empty target_roles safe end-to-end: writes, doctor READY, prescreen runs")
 
 
 def test_resume_choices_exactly_three_no_template():

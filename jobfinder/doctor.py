@@ -58,8 +58,9 @@ def _profile_ready(rel_path: str) -> bool:
         return False
     if not (d.get("seniority") or {}).get("honest_ceiling"):
         return False
-    if not (d.get("target_roles") or {}).get("primary"):
-        return False
+    # target_roles is OPTIONAL — the rubric scores function fit against `function.*`
+    # + the résumé, not target_roles (grep: prompts/ never reference it). A profile
+    # with empty target_roles is still ready; onboarding just couldn't derive them.
     if not (d.get("location") or {}).get("base_city"):
         return False
     return True
