@@ -109,11 +109,15 @@ def check() -> dict:
         "clis": clis,
         "clis_present": [c["id"] for c in clis],
         "ollama": ollama,
-        # Scoring runs in-session, so model quality matters. The agent relays this on first run.
-        "model_advice": ("Scoring is done in-session by your model — model quality matters. "
-                         "If you're on a small/default model (GitHub Copilot 'Auto', gpt-5-mini/"
-                         "nano, Haiku-tier), switch to a capable one (Copilot: pick GPT-5 or "
-                         "Claude Sonnet/Opus, not 'Auto') before scoring for reliable verdicts."),
+        # Scoring runs in-session, so model quality matters — but this is ADVICE the agent
+        # relays once and then proceeds. It must NEVER block or wait for a model switch:
+        # many plans (Copilot Free/Student) are Auto-only with no picker, so telling the
+        # user to switch would dead-end them.
+        "model_advice": ("Note: scoring runs in-session, so your model affects verdict quality/speed. "
+                         "If your plan lets you pick a model, a capable one (GPT-5 or Claude Sonnet/"
+                         "Opus) is better than a small default (Copilot 'Auto', gpt-5-mini/nano, "
+                         "Haiku-tier); if Auto is your only option (Copilot Free/Student), that's fine. "
+                         "Proceed either way — this is advice, never a gate."),
         "files": files,
         "missing_required": missing_required,
         "missing_recommended": missing_recommended,
@@ -142,8 +146,9 @@ def _human(rep: dict) -> str:
         ms = ", ".join(oll["models"][:6]) or "(no models pulled)"
         lines.append(f"  ✓ ollama (local/free) — models: {ms}")
     lines.append("")
-    lines.append("⚠ Model tip: scoring runs in-session, so use a CAPABLE model.")
-    lines.append("  On GitHub Copilot pick GPT-5 or Claude (Sonnet/Opus) — not 'Auto'/gpt-5-mini.")
+    lines.append("Note: scoring runs in-session — a capable model (GPT-5 / Claude Sonnet/Opus) is")
+    lines.append("  better IF your plan lets you pick; on Copilot Free/Student, Auto is the only")
+    lines.append("  option and that's fine. Advice, never a gate — proceeding.")
     lines.append("")
     lines.append("Config & resume files:")
     label = {

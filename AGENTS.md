@@ -51,16 +51,18 @@ reports `needs_onboarding`. (Advanced/automation fallback only: `python -m jobfi
 --answers <file.json>` writes the files non-interactively — but the terminal command above is the
 primary path.)
 
-## Model check — do this on your first message
-Scoring is done **by you, in-session**, so **your model matters.** If you are running as a
-**small / default model** (e.g. GitHub Copilot **"Auto"**, `gpt-5-mini` / `gpt-5-nano`,
-Haiku-tier, or similar lightweight default), tell the user before you start:
-> ⚠️ For reliable results, switch to a capable model — **Copilot: pick GPT-5 or Claude
-> (Sonnet/Opus), not "Auto."** Then re-open here and say "find me jobs." A small model
-> gives less reliable verdicts and can lose the flow.
+## Model note — one advisory line, NEVER a gate
+Scoring is done **by you, in-session**, so your model affects verdict quality/speed. On your FIRST
+message, if you're a small / default model (Copilot **"Auto"**, `gpt-5-mini` / `gpt-5-nano`,
+Haiku-tier, or similar), relay ONE advisory line — then **proceed regardless**:
+> Note: you're on a small/default model, so scoring quality/speed may be limited. If your plan lets
+> you pick a model, a capable one (GPT-5 / Claude Sonnet or Opus) is better — but on Copilot
+> Free/Student, **Auto is the only option, which is fine. Proceeding.**
 
-Offer to continue anyway if they insist, but say the scoring may be less reliable.
-`doctor --json` also returns this as `model_advice` — relay it if present.
+**Do NOT** ask the user to switch models and wait, tell them to "re-open," or treat this as a gate —
+many plans (Copilot Free/Student) are Auto-only with **no model picker**, so that would dead-end
+them. It is advice, not a checkpoint: say the line once and keep going. `doctor --json` returns the
+same text as `model_advice` — relay it once if present, then proceed with the run.
 
 ## Mode routing
 | The user wants… | Mode |
