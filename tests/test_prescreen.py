@@ -98,7 +98,18 @@ def test_ranking_prefers_ai_titles():
     plain = _job("Program Manager")
     ai = _job("AI Program Manager")
     kept, _ = prescreen_set([plain, ai], PROF, {"prescreen": {"max_llm_jobs": 1}})
-    assert kept and kept[0].title == "AI Program Manager"   # AI-in-title ranks higher
+    assert kept and kept[0].title == "AI Program Manager"   # AI-in-title still breaks a tie (same city/fn)
+
+
+def test_fit_proxy_ranks_city_function_over_bare_ai_title():
+    # FIX 1: the known case — a same-city in-function role (no seniority/AI keyword) must
+    # outrank a bare AI-titled role with no location fit. Under the OLD +2.0 AI-in-title
+    # weight the AI role won; the fit-proxy (location + seniority) now surfaces the real fit.
+    hyd = _job("Implementation Consultant", location="Hyderabad, India")   # user's city + in-function
+    ai_nowhere = _job("AI Program Manager", location="")                    # AI title, no location fit
+    kept, _ = prescreen_set([ai_nowhere, hyd], PROF, {"prescreen": {"max_llm_jobs": 1}})
+    assert kept and kept[0].title == "Implementation Consultant"
+    print("✓ fit-proxy: same-city in-function role outranks a bare AI-titled no-location role")
 
 
 if __name__ == "__main__":

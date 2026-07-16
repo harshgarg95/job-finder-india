@@ -211,18 +211,80 @@ def _gate(job: JobPosting, profile: dict, run_cfg: dict,
     return True, ""
 
 
-def _relevance(job: JobPosting, role_rx: list[re.Pattern]) -> float:
-    """Cheap deterministic relevance for ranking the kept set before the cap."""
+# Seniority bands for proximity scoring (title level vs the candidate's honest ceiling).
+_CEILING_RANK = {"intern": 0, "junior": 1, "associate": 1, "mid": 2, "senior": 3,
+                 "lead": 4, "manager": 5, "director": 6}
+_TITLE_BAND = [("intern", 0), ("junior", 1), ("associate", 1), ("senior", 3), ("lead", 4),
+               ("principal", 5), ("staff", 5), ("manager", 5), ("head", 6), ("director", 6),
+               ("vice president", 6), ("chief", 6)]
+
+
+_BARE_REMOTE_OK = {"", "anywhere", "global", "worldwide", "remote"}
+
+
+def _location_fit(job: JobPosting, profile: dict) -> float:
+    """Deterministic location fit for an India-based candidate: own city named >
+    India-remote / bare remote > India other-city > remote anchored abroad > else.
+
+    'remote +2.0' means remote the candidate can actually take — India-remote or a
+    location-agnostic 'Remote' posting. A remote role anchored to a foreign geo
+    ('Remote - Colombia', 'Remote, North America', a remote Munich role) is weak for
+    an India-based candidate and must not outrank a same-city in-function role — the
+    gate (untouched) still lets it through, but ranking demotes it."""
+    loc = (job.location or "").lower().strip()
+    lp = profile.get("location", {}) or {}
+    onsite = [c.lower() for c in (lp.get("onsite_cities") or []) if c]
+    is_remote = bool(job.remote) or any(t in loc for t in _REMOTE_TOKENS)
+    if onsite and any(c in loc for c in onsite):
+        return 2.5                                       # the user's own city — best
+    if _match_any(_INDIA_RX, loc):
+        return 2.0 if (is_remote and lp.get("remote_ok", True)) else 1.0
+    if is_remote and lp.get("remote_ok", True):
+        rest = loc
+        for t in _REMOTE_TOKENS:
+            rest = rest.replace(t, " ")
+        rest = re.sub(r"[^a-z]+", " ", rest).strip()     # what geo, if any, the remote is anchored to
+        return 2.0 if rest in _BARE_REMOTE_OK else 0.5   # bare remote OK; anchored-abroad remote weak
+    return 0.0                                           # onsite elsewhere / unknown
+
+
+def _seniority_fit(title: str, profile: dict) -> float:
+    """Proximity of the title's level to the candidate's honest ceiling. Unknown
+    level is neutral-positive (don't punish a title that states no level)."""
+    cr = _CEILING_RANK.get(str((profile.get("seniority", {}) or {}).get("honest_ceiling", "mid")).lower(), 2)
+    t = (title or "").lower()
+    bands = [b for kw, b in _TITLE_BAND if kw in t]
+    if not bands:
+        # A title that states NO level ("Implementation Consultant", "Business Analyst",
+        # "Solutions Consultant") is typically a mid–senior IC, not junior — so don't
+        # bury it 1.0 below a "Senior/Manager X"; give a decent, not-penalised credit.
+        return 1.0
+    gap = cr - max(bands)                                # how far the title sits below the ceiling
+    if gap in (0, 1):
+        return 1.5                                       # at / just below the ceiling — the sweet spot
+    if gap == 2:
+        return 0.75
+    return 0.0                                           # far below, or above the ceiling
+
+
+def _fit_proxy(job: JobPosting, profile: dict, role_rx: list[re.Pattern]) -> float:
+    """Deterministic FIT-correlated relevance for ranking the kept set before the
+    cap — so the top `full_score_top_n` are the most likely fits, not arbitrary
+    order. Function match + location + seniority proximity dominate; an AI/domain
+    term in the title is only a tie-breaker (was the trump that buried same-city
+    in-function roles under any 'AI X' title)."""
     title = job.title or ""
     s = 0.0
-    if _match_any(role_rx, title):
+    if _match_any(role_rx, title):                       # title in the target role family
         s += 3.0
-    if _match_any(_AI_RX, title):
-        s += 2.0
+    s += _location_fit(job, profile)                     # 0 – 2.5
+    s += _seniority_fit(title, profile)                  # 0 – 1.5
+    if _match_any(_AI_RX, title):                        # AI/domain term in title — tie-breaker only
+        s += 0.75
     if _match_any(_COMBO_RX, title):
         s += 0.5
     if _match_any(_AI_RX, (job.description or "")[:2000]):
-        s += 0.5
+        s += 0.25
     if job.link_verified:
         s += 0.25
     return s
@@ -275,7 +337,7 @@ def prescreen_set(jobs: list[JobPosting], profile: dict,
                 pen = 1.5 * len(hits)                    # small demotion, not a cliff
                 demoted.append({"title": j.title, "company": j.company,
                                 "reasons": [f"{c}:{v}" for c, v in hits], "penalty": round(pen, 1)})
-        rel[j.id] = _relevance(j, role_rx) - pen
+        rel[j.id] = _fit_proxy(j, profile, role_rx) - pen
     kept.sort(key=lambda j: (rel.get(j.id, 0.0), j.posted_at or ""), reverse=True)
 
     truncated_from = None

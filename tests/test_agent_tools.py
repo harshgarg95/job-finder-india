@@ -126,6 +126,43 @@ def test_live_tool_maps_status_to_liveness():
     assert json.loads(out)["liveness"] == "unknown"
 
 
+def test_prescreen_couldnt_verify_excluded_from_score_these():
+    d = _isolate()
+    good = [JobPosting(title=f"AI Delivery Manager {i}", company="C", source="ats:greenhouse",
+                       location="Hyderabad, India", url=f"https://boards.greenhouse.io/c/jobs/{1000 + i}")
+            for i in range(5)]
+    bad = [JobPosting(title="AI Program Manager", company="BareCo", source="ats:greenhouse",
+                      location="Hyderabad, India", url="https://bareco.example"),          # bare domain
+           JobPosting(title="AI Product Manager", company="LandCo", source="ats:greenhouse",
+                      location="Hyderabad, India", url="https://landco.example/careers")]  # careers landing
+    with open(os.path.join(d, "candidates.jsonl"), "w", encoding="utf-8") as f:
+        for j in good + bad:
+            f.write(json.dumps(j.to_dict()) + "\n")
+    rc, out = _run(AT.cmd_prescreen, [])
+    data = json.loads(out)
+    st_ids = {r["job_id"] for r in data["score_these"]}
+    cv_ids = {r["job_id"] for r in data["couldnt_verify"]}
+    bad_ids = {j.id for j in bad}
+    assert rc == 0
+    assert bad_ids == cv_ids                              # both URL non-job-links → couldnt_verify
+    assert not (st_ids & bad_ids)                         # ...and NONE consume a scoring slot
+    assert all(r.get("reason") for r in data["couldnt_verify"])   # surfaced with a reason, not silent
+    assert len(data["score_these"]) == 5                 # the 5 verifiable fill the slots
+    print("✓ FIX 2: URL non-job-links → couldnt_verify (with reason), never in score_these")
+
+
+def test_evaluate_surfaces_review_before_next_actions():
+    md = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "modes", "evaluate.md"), encoding="utf-8").read()
+    low = md.lower()
+    review_pos = low.find("review & learn")
+    next_pos = low.find("offer next actions")
+    assert 0 < review_pos < next_pos                     # FIX 3: review fires BEFORE the Done-able menu
+    assert "immediately after top.md" in low             # explicitly positioned right after Present
+    assert "python -m jobfinder dashboard" in md         # the alternative review surface pointer
+    print("✓ FIX 3: evaluate.md surfaces the feedback review after top.md, before next-actions; dashboard pointer present")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

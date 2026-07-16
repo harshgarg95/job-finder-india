@@ -128,6 +128,18 @@ def cmd_prescreen(argv: list[str]) -> int:
     jobs = [{"job_id": j.id, "title": j.title, "company": j.company, "location": j.location}
             for j in kept]
     fs_n = int((run_cfg.get("scoring", {}) or {}).get("full_score_top_n", 15))
+    # FIX 2 — fill score_these with VERIFIABLE jobs only. A URL-level non-job-link
+    # (bare domain / careers-landing) can't be scored honestly, so it goes to its own
+    # bucket instead of eating a scoring slot — 15 real verdicts, not 10 + 5 wasted.
+    # (URL-only check, no network; the JD-presence check still runs later at `enrich`.)
+    from . import verify
+    verifiable, couldnt_verify = [], []
+    for j, rec in zip(kept, jobs):
+        vstatus, vreason = verify.classify(j.url, None)
+        (verifiable if vstatus == "ok"
+         else couldnt_verify).append(rec if vstatus == "ok" else {**rec, "status": vstatus, "reason": vreason})
+    score_these = verifiable[:fs_n]
+    backfill_pool = verifiable[fs_n:]
     print(json.dumps({
         "input": rep["input"], "kept": rep["kept"], "cap": rep["cap"],
         "truncated_from": rep["truncated_from"], "by_reason": rep["by_reason"],
@@ -137,12 +149,16 @@ def cmd_prescreen(argv: list[str]) -> int:
         "full_score_top_n": fs_n,
         "prescreened_path": ppath,
         "jobs": jobs,                       # full ranked set (rank = list order, best first)
-        "score_these": jobs[:fs_n],         # FIX B — full-score ONLY these top-N by prescreen rank
-        "RULE": (f"Full-score in-session ONLY the top {min(fs_n, len(jobs))} jobs in `score_these` "
-                 f"(highest prescreen rank). The other {max(0, len(jobs) - fs_n)} are auto-listed by the "
-                 "tracker under 'Prescreen-filtered (not individually scored)' — do NOT score them. For "
-                 "each job you DO score: run `enrich` first; if its verifiability.status != 'ok', record an "
-                 "unverifiable entry instead of a verdict. Never score beyond the prescreened set."),
+        "score_these": score_these,         # FIX 2 — top-N VERIFIABLE by prescreen rank
+        "couldnt_verify": couldnt_verify,   # URL non-job-links → bucket (no enrich, no slot)
+        "backfill_pool": backfill_pool,     # next verifiable jobs — pull one on a runtime no_jd
+        "RULE": (f"Full-score in-session ONLY the {len(score_these)} jobs in `score_these` (top verifiable "
+                 f"by prescreen rank). Log every job in `couldnt_verify` DIRECTLY as an unverifiable entry "
+                 "(reason given) — do NOT enrich or score them, they don't consume a slot. For each job you "
+                 "DO score, run `enrich` first; if its verifiability/location gate is not 'ok' at enrich time "
+                 "(e.g. no_jd), record it unverifiable AND pull the next job from `backfill_pool` so you still "
+                 "reach the target count. Everything else is auto-listed 'Prescreen-filtered'. Never score "
+                 "beyond the prescreened set."),
     }, ensure_ascii=False, indent=2))
     return 0
 

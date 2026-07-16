@@ -34,10 +34,17 @@ host model) in this session. No headless model call.
 4. **Prescreen (the cap + the full-score cutoff).** Say "Prescreening the candidates down
    to the cap…", then `python -m jobfinder prescreen --json`.
    It returns the bounded, RANKED list (≤ `run.yml: max_llm_jobs`) plus **`score_these`** —
-   the top `full_score_top_n` (default 15) by prescreen rank. **Full-score ONLY the jobs in
-   `score_these`.** The rest are auto-listed by the tracker under "Prescreen-filtered (not
-   individually scored)" with their deterministic reason — do NOT score them, and do NOT
-   invent verdicts for them. (This is the latency win: 15 scored, not 40.)
+   the top `full_score_top_n` (default 15) **verifiable** jobs by prescreen rank (fit-correlated:
+   function + location + seniority, so the top-N are the most likely fits, not arbitrary order).
+   **Full-score ONLY the jobs in `score_these`.** It also returns **`couldnt_verify`** (URL-level
+   non-job-links — bare domains / careers-landing pages — that can't be scored) and a
+   **`backfill_pool`** (the next verifiable jobs). The rest are auto-listed by the tracker under
+   "Prescreen-filtered (not individually scored)" — do NOT score them or invent verdicts. (Latency
+   win: 15 scored, not 40. FIX 2: couldn't-verify jobs never eat a scoring slot.)
+
+   First, log every job in **`couldnt_verify`** DIRECTLY as an unverifiable entry (no enrich, no
+   score — they land in "⚠️ Couldn't verify"): for each, write `{"job_id","title","company","url",
+   "unverifiable":true,"reason":"<its reason>"}` and `tracker --add` it.
 5. **Score each job in `score_these`, in-session — YOU are the scorer, one job at a time.**
    First tell the user how many you're about to score ("Scoring the top 15 in-session — I'll
    note progress as I go"). Scoring is YOU, not a tool, so **post your own progress** every few
@@ -54,6 +61,8 @@ host model) in this session. No headless model call.
       #                               "unverifiable":true,"reason":"<the failing check's reason>"}
       python -m jobfinder tracker --add data/results/_verdict.json
       ```
+      Then **backfill the slot**: take the next job from `backfill_pool` and score it, so you
+      still reach `full_score_top_n` real verdicts (a couldn't-verify job never costs you a slot).
    3. **If both are `"ok"`:** take `scoring_view` (the full JD) from the enrich output. **YOU**
       apply `prompts/_rubric.md` against `resume.md` + `config/profile.yml` — cite the exact
       résumé line ↔ exact JD requirement for every dimension, keep legitimacy separate, default
@@ -95,16 +104,10 @@ host model) in this session. No headless model call.
    links, with reason) · **Filtered out — and why** (DON'T APPLY) · **Prescreen-filtered —
    not individually scored** (rank + reason). The footer prints the wall-clock time. If a
    "raise `full_score_top_n`" risk note appears in top.md, relay it to the user.
-7. **Offer next actions — MANDATORY numbered list (never free text; see `_shared.md`).**
-   Present exactly this and end with "Reply with the number." (the user types it in the terminal):
-   > What next? Reply with the number:
-   >   **1.** Open the full report (`data/results/top.md`)
-   >   **2.** Widen sources — add Adzuna/JSearch keys (`.env`), or enable Apify deep-mode
-   >   **3.** Adjust target roles / filters (`config/profile.yml`) and re-run
-   >   **4.** Check whether a posting is still live (`python -m jobfinder live <job_id>`)
-   >   **5.** Done `← (default)`
-8. **Review & learn (feedback loop).** For each shown job, offer a MANDATORY numbered mark
-   (per the `_shared.md` choice convention — the user types the number):
+7. **Review & learn (feedback loop) — do this IMMEDIATELY after top.md, BEFORE the next-actions
+   menu** (so a "Done" can never skip it; this loop is what makes each run better). For each shown
+   job, offer a MANDATORY numbered mark (per the `_shared.md` choice convention — the user types
+   the number):
    > Mark this one? Reply with the number:
    >   **1.** Applied   **2.** Interested   **3.** Not suitable   **4.** Skip `← (default)`
 
@@ -123,6 +126,19 @@ host model) in this session. No headless model call.
    scores. **The rubric never changes.** Undo a mis-mark:
    `python -m jobfinder feedback --job <id> --undo`; reset all learning:
    `python -m jobfinder preferences --clear`.
+
+   **Alternative review surface:** instead of (or besides) the inline marks, you may point the user
+   to the local dashboard — `python -m jobfinder dashboard` (opens http://127.0.0.1:8755; data never
+   leaves their machine) — where they click Applied / Wouldn't-apply(+reason). It writes the SAME
+   feedback store and replays the same way next run. Always surface one of the two — never skip the review.
+8. **Offer next actions — MANDATORY numbered list (never free text; see `_shared.md`).**
+   Present exactly this and end with "Reply with the number." (the user types it in the terminal):
+   > What next? Reply with the number:
+   >   **1.** Open the full report (`data/results/top.md`)
+   >   **2.** Widen sources — add Adzuna/JSearch keys (`.env`), or enable Apify deep-mode
+   >   **3.** Adjust target roles / filters (`config/profile.yml`) and re-run
+   >   **4.** Check whether a posting is still live (`python -m jobfinder live <job_id>`)
+   >   **5.** Done `← (default)`
 
 ## NEVER
 - **Run or search for a `score` / `evaluate` subcommand — it does not exist.** YOU write the
