@@ -78,16 +78,34 @@ def test_tracker_tool_upserts_by_job_id():
     assert os.path.exists(os.path.join(d, "top.md"))
 
 
-def test_tracker_tool_rejects_bad_verdict():
+def test_tracker_rejects_no_id_but_surfaces_malformed():
     d = _isolate()
-    # no id at all → rejected
+    # no id at all → still a hard reject (can't track it)
     p = os.path.join(d, "bad.json"); json.dump({"title": "no id, no score"}, open(p, "w"))
     rc, out = _run(AT.cmd_tracker, ["--add", p])
     assert rc == 1 and "job_id" in json.loads(out)["error"]
-    # has id but no score and not unverifiable → rejected (needs fit_score)
-    p2 = os.path.join(d, "bad2.json"); json.dump({"job_id": "z", "title": "x"}, open(p2, "w"))
+    # has id but no score/verdict/headline → NOT rejected: surfaced as malformed (never silently dropped)
+    p2 = os.path.join(d, "bad2.json"); json.dump({"job_id": "z", "title": "x", "url": "https://x/1"}, open(p2, "w"))
     rc2, out2 = _run(AT.cmd_tracker, ["--add", p2])
-    assert rc2 == 1 and "fit_score" in json.loads(out2)["error"]
+    resp = json.loads(out2.strip().splitlines()[-1])
+    assert rc2 == 0 and resp["malformed"] is True and "malformed" in resp["reason"]
+    top = open(os.path.join(d, "top.md"), encoding="utf-8").read()
+    assert "Couldn't verify" in top and "malformed" in top          # surfaced loudly, NOT "Filtered out"
+    print("✓ tracker: no-id rejected; a malformed record is surfaced (Couldn't-verify), never dropped")
+
+
+def test_tracker_normalizes_lowercase_verdict_and_string_score():
+    d = _isolate()
+    v = {"job_id": "lc1", "company": "Google", "title": "TPM AI", "url": "https://x/jobs/9",
+         "verdict": "apply", "fit_score": "4.0", "headline": "APPLY — strong TPM-AI fit"}
+    p = os.path.join(d, "v.json"); json.dump(v, open(p, "w"))
+    rc, _ = _run(AT.cmd_tracker, ["--add", p])
+    assert rc == 0
+    row = [json.loads(l) for l in open(os.path.join(d, "scored.jsonl"))][0]
+    assert row["verdict"] == "APPLY" and row["fit_score"] == 4.0 and not row.get("unverifiable")
+    top = open(os.path.join(d, "top.md"), encoding="utf-8").read()
+    assert "1 APPLY" in top and "TPM AI" in top                     # bucketed as APPLY (was "0 APPLY" before fix)
+    print("✓ tracker: lowercase verdict + string fit_score → canonical APPLY, bucketed correctly (not Filtered)")
 
 
 def test_tracker_tool_accepts_unverifiable_record():

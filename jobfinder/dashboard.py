@@ -20,6 +20,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import feedback
+from .schema import normalize_record
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESULTS_DIR = os.path.join(ROOT, "data", "results")
@@ -90,10 +91,14 @@ def _elapsed_secs() -> int | None:
 
 
 def _load_run() -> dict:
-    """Assemble the whole run for the page, mirroring top.md's honest sections."""
-    rows = _read_jsonl(_p("scored.jsonl"))
+    """Assemble the whole run for the page, mirroring top.md's honest sections.
+    Records are normalized with the SAME gate as the tracker, so a schema-off verdict
+    (lowercase, string score, missing headline) is canonicalized or surfaced as
+    malformed — never silently mis-bucketed as 'nothing worth applying'."""
+    rows = [normalize_record(r) for r in _read_jsonl(_p("scored.jsonl"))]
     verdicts = sorted((r for r in rows if not r.get("unverifiable")), key=_fit, reverse=True)
-    couldnt = [r for r in rows if r.get("unverifiable")]
+    malformed = [r for r in rows if r.get("malformed")]
+    couldnt = [r for r in rows if r.get("unverifiable") and not r.get("malformed")]
     scored_ids = {r.get("job_id") for r in rows}                     # verdicts + unverifiable both count
     fs_n = int((_run_cfg().get("scoring") or {}).get("full_score_top_n", 15))
 
@@ -117,9 +122,9 @@ def _load_run() -> dict:
     funnel = {"candidates": rep.get("input"), "prescreened": rep.get("kept"),
               "scored": len(verdicts), "truncated_from": rep.get("truncated_from")}
 
-    return {"jobs": verdicts, "couldnt_verify": couldnt, "prescreen_filtered": prescreen_filtered,
-            "funnel": funnel, "quota": _quota(), "elapsed_secs": _elapsed_secs(),
-            "stats": feedback.stats()}
+    return {"jobs": verdicts, "couldnt_verify": couldnt, "malformed": malformed,
+            "prescreen_filtered": prescreen_filtered, "funnel": funnel, "quota": _quota(),
+            "elapsed_secs": _elapsed_secs(), "stats": feedback.stats()}
 
 
 PAGE = r"""<!doctype html><html lang=en><head><meta charset=utf-8>
@@ -140,10 +145,13 @@ PAGE = r"""<!doctype html><html lang=en><head><meta charset=utf-8>
  .pill{padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:600}
  .p-apply{background:#11331f;color:var(--met)} .p-stretch{background:#33290d;color:var(--part)}
  .p-dont{background:#331515;color:var(--miss)} .p-cv{background:#332a0d;color:var(--part)}
+ .p-malf{background:#3a1520;color:var(--miss)}
  .wrap{max-width:860px;margin:0 auto;padding:20px 24px 70px}
- h2.sec{font-size:14px;font-weight:600;margin:28px 0 2px}
+ h2.sec{font-size:14px;font-weight:600;margin:28px 0 2px} h2.sec.malf{color:var(--miss)}
  .job{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin:14px 0}
- .job.cv{border-color:#3a3416}
+ .job.cv{border-color:#3a3416} .job.malf{border-color:#4a1e28}
+ .malfnote{color:var(--miss);font-size:12.5px;margin:2px 0 8px}
+ .malfmeta{color:var(--mut);font-size:11.5px;margin-top:4px}
  .row1{display:flex;gap:14px;align-items:center}
  .score{font-size:26px;font-weight:700;min-width:50px;text-align:center;line-height:1}
  .score small{display:block;font-size:10px;color:var(--mut);font-weight:500;margin-top:3px}
@@ -229,6 +237,7 @@ function updateHead(d){
    `<span class="pill p-stretch">${n("stretch")} STRETCH</span>`+
    `<span class="pill p-dont">${d.jobs.filter(j=>vkey(j.verdict)==="dont").length} filtered out</span>`+
    (d.couldnt_verify.length?`<span class="pill p-cv">${d.couldnt_verify.length} couldn't verify</span>`:"")+
+   ((d.malformed&&d.malformed.length)?`<span class="pill p-malf">${d.malformed.length} malformed</span>`:"")+
    `<span>${fbn} call${fbn==1?"":"s"} saved</span>`;
  const f=d.funnel||{}, q=d.quota||{}, parts=[];
  if(f.candidates!=null) parts.push(`<span>Funnel: <b>${f.candidates}</b> candidates → <b>${f.prescreened}</b> prescreened → <b>${f.scored}</b> scored</span>`);
@@ -304,6 +313,24 @@ function makeCVCard(j){
  mountActions(el,j);
  return el;
 }
+function makeMalfCard(j){
+ const el=document.createElement("div"); el.className="job malf";
+ const wv=(j.withheld_verdict!=null&&j.withheld_verdict!=="")?`raw verdict: ${esc(String(j.withheld_verdict))}`:"";
+ const ws=(j.withheld_fit_score!=null&&j.withheld_fit_score!=="")?`raw score: ${esc(String(j.withheld_fit_score))}`:"";
+ el.innerHTML=
+   `<div class=row1>
+      <div class="score" style="color:var(--miss);font-size:20px">⚠<small>malformed</small></div>
+      <div style="flex:1">
+        <span class="pill p-malf">MALFORMED</span>
+        <span class=ttl> ${esc(j.title||"(no title)")}</span>
+        <div class=meta>${esc(j.company||"")} · ${esc(j.location||"")}</div>
+        <div class=malfnote>${esc(j.reason||"the model's verdict didn't match the schema")}</div>
+        <div class=malfmeta>${[wv,ws].filter(Boolean).join(" · ")}</div>
+      </div>
+    </div>
+    ${j.url?`<a class=link href="${esc(j.url)}" target=_blank rel=noopener>open link ↗</a>`:""}`;
+ return el;
+}
 function pfTable(rows){
  return `<table class=pf><thead><tr><th>#</th><th>Title</th><th>Company</th><th>Location</th><th></th></tr></thead><tbody>`+
    rows.map(j=>`<tr><td>${j.rank}</td><td>${esc(j.title)}</td><td>${esc(j.company)}</td><td>${esc(j.location||"—")}</td>`+
@@ -315,8 +342,14 @@ async function load(){
  const d=await (await fetch("/api/data")).json(); updateHead(d);
  const L=document.getElementById("list"), H=document.getElementById("hidden");
  L.innerHTML=""; H.innerHTML="";
- if(!d.jobs.length && !d.couldnt_verify.length && !d.prescreen_filtered.length){
+ const nMalf=(d.malformed&&d.malformed.length)||0;
+ if(!d.jobs.length && !d.couldnt_verify.length && !d.prescreen_filtered.length && !nMalf){
    L.innerHTML="<div class=empty>No scored results yet. Say <b>find me jobs</b> in your CLI to run discovery + scoring, then refresh.</div>";return;}
+ if(nMalf){   // LOUD, first — never let a schema-off run look like "nothing worth applying"
+   const h=document.createElement("h2"); h.className="sec malf";
+   h.textContent=`⚠️ ${nMalf} verdict${nMalf>1?"s were":" was"} malformed (model output didn't match the schema — likely a too-small model). Not scored.`;
+   L.appendChild(h); d.malformed.forEach(j=>L.appendChild(makeMalfCard(j)));
+ }
  const show=d.jobs.filter(j=>vkey(j.verdict)!=="dont");
  const dont=d.jobs.filter(j=>vkey(j.verdict)==="dont");
  if(show.length){L.innerHTML="<h2 class=sec>✅ Worth applying — APPLY / STRETCH</h2>";show.forEach(j=>L.appendChild(makeCard(j)));}

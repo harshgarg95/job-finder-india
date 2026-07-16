@@ -75,6 +75,28 @@ def test_dashboard_feedback_persists_and_appears_in_preferences():
     print("✓ dashboard feedback.record() persists + appears in preferences (prescreen replay path)")
 
 
+def test_dashboard_surfaces_malformed_and_normalizes():
+    d = tempfile.mkdtemp(prefix="jf-dash-malf-")
+    D.RESULTS_DIR = d
+    rows = [
+        {"job_id": "ok1", "title": "TPM", "company": "G", "url": "https://x/1", "verdict": "apply",
+         "fit_score": "4.0", "headline": "APPLY — good"},          # lowercase + string score, HAS headline
+        {"job_id": "bad1", "title": "PM", "company": "H", "url": "https://x/2", "verdict": "stretch",
+         "fit_score": 3.0},                                        # missing headline → malformed
+    ]
+    with open(os.path.join(d, "scored.jsonl"), "w", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r) + "\n")
+    run = D._load_run()
+    # the with-headline lowercase record normalizes into a real verdict (NOT silently dropped)
+    assert [j["job_id"] for j in run["jobs"]] == ["ok1"]
+    assert run["jobs"][0]["verdict"] == "APPLY" and run["jobs"][0]["fit_score"] == 4.0
+    # the missing-headline record is surfaced as malformed, not silently blank
+    assert [m["job_id"] for m in run["malformed"]] == ["bad1"]
+    assert "malformed" in run["malformed"][0]["reason"]
+    print("✓ dashboard: normalizes a lowercase verdict + surfaces a malformed (missing-headline) record")
+
+
 def test_dashboard_serves_http():
     import threading
     import urllib.request

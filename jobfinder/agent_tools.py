@@ -261,10 +261,6 @@ def cmd_tracker(argv: list[str]) -> int:
     if not verdict.get("job_id"):
         print(json.dumps({"error": "record needs a job_id"}))
         return 1
-    if not verdict.get("unverifiable") and not isinstance(verdict.get("fit_score"), (int, float)):
-        print(json.dumps({"error": "verdict needs a numeric fit_score (or set unverifiable:true + reason "
-                                   "for a Couldn't-verify entry)"}))
-        return 1
     # Backfill the origin channel + link/location from the discovery record so
     # top.md/tracker.md label each job with its source (the verdict schema in
     # prompts/score-job.md carries url/title/company but not source/location).
@@ -273,10 +269,17 @@ def cmd_tracker(argv: list[str]) -> int:
         for k in ("source", "link_source", "location", "url", "title", "company"):
             if not verdict.get(k) and jrec.get(k):
                 verdict[k] = jrec.get(k)
+    # NORMALIZE before persist: coerce fit_score to a number, canonicalize the verdict
+    # case (apply→APPLY), validate required fields (verdict, fit_score, headline). A
+    # record that still fails is flagged malformed → routed to Couldn't-verify with an
+    # explicit reason. So score.py's renderer receives CANONICAL data and never
+    # mis-buckets a lowercase/schema-off verdict as "Filtered out". (score.py untouched.)
+    from .schema import normalize_record, coerce_fit
+    verdict = normalize_record(verdict)
     spath = os.path.join(RESULTS, "scored.jsonl")
     rows = [json.loads(l) for l in open(spath, encoding="utf-8") if l.strip()] if os.path.exists(spath) else []
-    rows = [r for r in rows if r.get("job_id") != verdict["job_id"]] + [verdict]   # upsert by job_id
-    rows.sort(key=lambda v: (-float(v.get("fit_score", 0)), len(v.get("caps_applied", []) or [])))
+    rows = [normalize_record(r) for r in rows if r.get("job_id") != verdict["job_id"]] + [verdict]  # upsert
+    rows.sort(key=lambda v: (-(coerce_fit(v.get("fit_score")) or 0.0), len(v.get("caps_applied", []) or [])))
     with open(spath, "w", encoding="utf-8") as f:
         for r in rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
@@ -298,10 +301,13 @@ def cmd_tracker(argv: list[str]) -> int:
     score._write_outputs(rows, [], RESULTS, int((run_cfg.get("scoring", {}) or {}).get("top_n", 10)),
                          funnel=funnel, prescreened=prescreened, full_score_top_n=fs_n,
                          started_at=started_at)
-    print(json.dumps({"tracked": len([r for r in rows if not r.get("unverifiable")]),
-                      "added": verdict["job_id"], "unverifiable": bool(verdict.get("unverifiable")),
-                      "verdict": verdict.get("verdict"), "fit_score": verdict.get("fit_score")},
-                     ensure_ascii=False))
+    out = {"tracked": len([r for r in rows if not r.get("unverifiable")]),
+           "added": verdict["job_id"], "unverifiable": bool(verdict.get("unverifiable")),
+           "malformed": bool(verdict.get("malformed")),
+           "verdict": verdict.get("verdict"), "fit_score": verdict.get("fit_score")}
+    if verdict.get("malformed"):
+        out["reason"] = verdict.get("reason")           # surfaced, never a silent drop
+    print(json.dumps(out, ensure_ascii=False))
     return 0
 
 

@@ -21,6 +21,70 @@ def _slug(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", (s or "").lower()).strip("-")
 
 
+# ── Verdict-record normalization (shared by the tracker writer + the dashboard) ──
+# A too-small model emits schema-off verdicts (lowercase "apply", a string fit_score,
+# a missing headline). Renderers must receive CANONICAL data, and a record that still
+# can't be validated must be surfaced LOUDLY — never silently mis-bucketed as
+# "Filtered out" / "nothing worth applying". This is that gate.
+_VERDICTS = {"APPLY", "STRETCH", "DON'T APPLY"}
+
+
+def coerce_fit(x):
+    """A fit_score as int/float/'4.0' → float; anything else → None. (bool is not a score.)"""
+    if isinstance(x, bool):
+        return None
+    if isinstance(x, (int, float)):
+        return float(x)
+    try:
+        return float(str(x).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def normalize_verdict_str(v):
+    """Normalize a verdict to canonical APPLY / STRETCH / DON'T APPLY, or None."""
+    s = re.sub(r"\s+", " ", str(v or "").strip().upper().replace("’", "'").replace("`", "'"))
+    if s in _VERDICTS:
+        return s
+    if s.startswith("DON") or "DO NOT APPLY" in s:       # DON'T APPLY contains "APPLY" — check first
+        return "DON'T APPLY"
+    if "APPLY" in s:
+        return "APPLY"
+    if "STRETCH" in s:
+        return "STRETCH"
+    return None
+
+
+def normalize_record(rec: dict) -> dict:
+    """Coerce/validate a model-produced verdict record so renderers get canonical data.
+    Clean record → fit_score coerced to float + verdict canonicalized. A record that
+    fails required-field validation (verdict, numeric fit_score, headline) is flagged
+    `unverifiable` + `malformed` with an explicit reason — routed to Couldn't-verify,
+    NEVER rendered as a silent verdict. Already-unverifiable records pass through."""
+    if not isinstance(rec, dict) or rec.get("unverifiable"):
+        return rec
+    fit = coerce_fit(rec.get("fit_score"))
+    verd = normalize_verdict_str(rec.get("verdict"))
+    headline = str(rec.get("headline") or "").strip()
+    problems = []
+    if verd is None:
+        problems.append("unknown/missing verdict")
+    if fit is None:
+        problems.append("non-numeric fit_score")
+    if not headline:
+        problems.append("missing headline")
+    if problems:
+        out = {k: val for k, val in rec.items() if k != "fit_score"}   # drop bad score (keeps sorts safe)
+        out.update({
+            "unverifiable": True, "malformed": True,
+            "reason": f"verdict malformed ({'; '.join(problems)}) — schema mismatch, likely a "
+                      "too-small model. Not scored.",
+            "withheld_verdict": rec.get("verdict"), "withheld_fit_score": rec.get("fit_score"),
+        })
+        return out
+    return {**rec, "fit_score": fit, "verdict": verd, "headline": headline}
+
+
 @dataclass
 class JobPosting:
     # ── Identity / provenance ───────────────────────────────────────────────
