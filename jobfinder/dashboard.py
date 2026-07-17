@@ -90,6 +90,23 @@ def _elapsed_secs() -> int | None:
         return None
 
 
+def _scoring(done_ids: set) -> dict:
+    """How many of the persisted score_these target already have a record — so a
+    partial run (agent stopped early) never looks complete in the browser."""
+    sp = _p("score_these.json")
+    if not os.path.exists(sp):
+        return {"target": 0, "scored": 0, "remaining": 0, "complete": True}
+    try:
+        d = json.load(open(sp, encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {"target": 0, "scored": 0, "remaining": 0, "complete": True}
+    ids = list(d.get("ids", []))
+    target = int(d.get("target", len(ids)))
+    rem = [i for i in ids if i not in done_ids]
+    return {"target": target, "scored": target - len(rem), "remaining": len(rem),
+            "complete": bool(target) and not rem}
+
+
 def _load_run() -> dict:
     """Assemble the whole run for the page, mirroring top.md's honest sections.
     Records are normalized with the SAME gate as the tracker, so a schema-off verdict
@@ -124,7 +141,8 @@ def _load_run() -> dict:
 
     return {"jobs": verdicts, "couldnt_verify": couldnt, "malformed": malformed,
             "prescreen_filtered": prescreen_filtered, "funnel": funnel, "quota": _quota(),
-            "elapsed_secs": _elapsed_secs(), "stats": feedback.stats()}
+            "elapsed_secs": _elapsed_secs(), "scoring": _scoring(scored_ids),
+            "stats": feedback.stats()}
 
 
 PAGE = r"""<!doctype html><html lang=en><head><meta charset=utf-8>
@@ -145,7 +163,9 @@ PAGE = r"""<!doctype html><html lang=en><head><meta charset=utf-8>
  .pill{padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:600}
  .p-apply{background:#11331f;color:var(--met)} .p-stretch{background:#33290d;color:var(--part)}
  .p-dont{background:#331515;color:var(--miss)} .p-cv{background:#332a0d;color:var(--part)}
- .p-malf{background:#3a1520;color:var(--miss)}
+ .p-malf{background:#3a1520;color:var(--miss)} .p-inc{background:#3a1520;color:var(--miss)}
+ .incbanner{background:#3a1520;border:1px solid #6a2436;color:#ffb4be;border-radius:12px;
+   padding:12px 16px;margin:16px 0 4px;font-size:13.5px;font-weight:600;line-height:1.5}
  .wrap{max-width:860px;margin:0 auto;padding:20px 24px 70px}
  h2.sec{font-size:14px;font-weight:600;margin:28px 0 2px} h2.sec.malf{color:var(--miss)}
  .job{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin:14px 0}
@@ -238,6 +258,7 @@ function updateHead(d){
    `<span class="pill p-dont">${d.jobs.filter(j=>vkey(j.verdict)==="dont").length} filtered out</span>`+
    (d.couldnt_verify.length?`<span class="pill p-cv">${d.couldnt_verify.length} couldn't verify</span>`:"")+
    ((d.malformed&&d.malformed.length)?`<span class="pill p-malf">${d.malformed.length} malformed</span>`:"")+
+   ((d.scoring&&d.scoring.target&&!d.scoring.complete)?`<span class="pill p-inc">⚠ ${d.scoring.scored}/${d.scoring.target} scored</span>`:"")+
    `<span>${fbn} call${fbn==1?"":"s"} saved</span>`;
  const f=d.funnel||{}, q=d.quota||{}, parts=[];
  if(f.candidates!=null) parts.push(`<span>Funnel: <b>${f.candidates}</b> candidates → <b>${f.prescreened}</b> prescreened → <b>${f.scored}</b> scored</span>`);
@@ -343,8 +364,14 @@ async function load(){
  const L=document.getElementById("list"), H=document.getElementById("hidden");
  L.innerHTML=""; H.innerHTML="";
  const nMalf=(d.malformed&&d.malformed.length)||0;
- if(!d.jobs.length && !d.couldnt_verify.length && !d.prescreen_filtered.length && !nMalf){
+ const incomplete=!!(d.scoring&&d.scoring.target&&!d.scoring.complete);
+ if(!d.jobs.length && !d.couldnt_verify.length && !d.prescreen_filtered.length && !nMalf && !incomplete){
    L.innerHTML="<div class=empty>No scored results yet. Say <b>find me jobs</b> in your CLI to run discovery + scoring, then refresh.</div>";return;}
+ if(incomplete){   // FIRST + LOUD — a partial run must never look complete in the browser
+   const b=document.createElement("div"); b.className="incbanner";
+   b.textContent=`⚠️ Scored ${d.scoring.scored} of ${d.scoring.target} — this run is incomplete (a smaller/limited model may have stopped early). Re-run to score the remaining ${d.scoring.remaining}.`;
+   L.appendChild(b);
+ }
  if(nMalf){   // LOUD, first — never let a schema-off run look like "nothing worth applying"
    const h=document.createElement("h2"); h.className="sec malf";
    h.textContent=`⚠️ ${nMalf} verdict${nMalf>1?"s were":" was"} malformed (model output didn't match the schema — likely a too-small model). Not scored.`;
@@ -352,8 +379,8 @@ async function load(){
  }
  const show=d.jobs.filter(j=>vkey(j.verdict)!=="dont");
  const dont=d.jobs.filter(j=>vkey(j.verdict)==="dont");
- if(show.length){L.innerHTML="<h2 class=sec>✅ Worth applying — APPLY / STRETCH</h2>";show.forEach(j=>L.appendChild(makeCard(j)));}
- else if(d.jobs.length) L.innerHTML="<div class=empty>No APPLY/STRETCH roles in this run — reveal the filtered-out roles below, or widen discovery.</div>";
+ if(show.length){const sh=document.createElement("h2");sh.className="sec";sh.textContent="✅ Worth applying — APPLY / STRETCH";L.appendChild(sh);show.forEach(j=>L.appendChild(makeCard(j)));}
+ else if(d.jobs.length){const e=document.createElement("div");e.className="empty";e.textContent="No APPLY/STRETCH roles in this run — reveal the filtered-out roles below, or widen discovery.";L.appendChild(e);}
  if(d.couldnt_verify.length){
    const h=document.createElement("h2"); h.className="sec"; h.textContent=`⚠️ Couldn't verify — check manually (${d.couldnt_verify.length})`;
    L.appendChild(h); d.couldnt_verify.forEach(j=>L.appendChild(makeCVCard(j)));

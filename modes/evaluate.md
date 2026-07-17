@@ -103,9 +103,21 @@ host model) in this session. No headless model call.
     "legitimacy":{"tier":"high","signals":["real employer JD, specific team"]},
     "caps_applied":[],"holistic_before_caps":4.2}
    ```
-   Then `python -m jobfinder tracker --add data/results/_verdict.json`. Repeat for every job in
-   `score_these`. A DON'T-APPLY looks the same but with e.g. `"verdict":"DON'T APPLY"`,
-   `"fit_score":1.5`, and `"caps_applied":["wrong_function->2.0"]`.
+   Then `python -m jobfinder tracker --add data/results/_verdict.json`. A DON'T-APPLY looks the same
+   but with e.g. `"verdict":"DON'T APPLY"`, `"fit_score":1.5`, `"caps_applied":["wrong_function->2.0"]`.
+
+   **Batch to cut round-trips (fewer chances to bail):** you MAY write several verdicts to ONE file —
+   JSONL (one JSON object per line) or a JSON array — and add them in a single call (e.g. score 5,
+   then `python -m jobfinder tracker --add data/results/_batch.jsonl`). Single-verdict add still works.
+
+   **COMPLETION GATE — you cannot silently skip.** After every `tracker --add`, run
+   `python -m jobfinder tracker --status --json` → `{target, scored, remaining, remaining_ids}`.
+   **While `remaining > 0` you are NOT done — keep scoring the `remaining_ids`** (each is a `score_these`
+   `job_id` with no record yet). You may move to step 6 ONLY when `remaining == 0` (every score_these
+   job has a verdict or an unverifiable record). **Do NOT present results or move to feedback while
+   `remaining > 0`. Do NOT claim to have scored jobs you have not written verdicts for** — narrating
+   "scoring 12/15" while `scored` is 3 is a lie. If you stop anyway, `top.md` carries a
+   "⚠️ Scored N of M — incomplete" banner and the dashboard shows it: never present a partial run as complete.
 6. **Present.** Show `data/results/top.md`. It now has four parts: **✅ APPLY / STRETCH**
    (full detail + citations) · **⚠️ Couldn't verify — check manually** (unreadable / non-job
    links, with reason) · **Filtered out — and why** (DON'T APPLY) · **Prescreen-filtered —
@@ -158,6 +170,10 @@ path when the inline marks above get skipped. The agent points to it; the dashbo
 - **Run or search for a `score` / `evaluate` subcommand — it does not exist.** YOU write the
   verdict JSON; `tracker --add` persists it. That is the whole scoring step.
 - Score, discover, or enrich anything outside `prescreened.jsonl` / `score_these`.
+- **Re-run `discover` during scoring.** Once discovery + prescreen are done, score ONLY from the
+  existing `score_these` / `prescreened.jsonl` — re-discovering mid-flow churns state and wastes quota.
+- **Present results, or narrate progress you haven't written**, while `tracker --status` reports
+  `remaining > 0`. Finish the `remaining_ids` first; a partial run is never "complete".
 - Invent a citation, or output APPLY without a cited résumé line.
 - Shell out to a headless `claude -p` (that's the separate CI path).
 - Auto-apply or draft an application. Score and stop.

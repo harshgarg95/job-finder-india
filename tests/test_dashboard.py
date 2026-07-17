@@ -97,6 +97,22 @@ def test_dashboard_surfaces_malformed_and_normalizes():
     print("✓ dashboard: normalizes a lowercase verdict + surfaces a malformed (missing-headline) record")
 
 
+def test_dashboard_surfaces_incomplete_run():
+    d = tempfile.mkdtemp(prefix="jf-dash-inc-")
+    D.RESULTS_DIR = d
+    json.dump({"ids": ["a", "b", "c"], "target": 3}, open(os.path.join(d, "score_these.json"), "w"))
+    with open(os.path.join(d, "scored.jsonl"), "w", encoding="utf-8") as f:   # only 1 of 3 scored
+        f.write(json.dumps({"job_id": "a", "title": "A", "company": "C", "url": "https://x/1",
+                            "verdict": "APPLY", "fit_score": 4.0, "headline": "APPLY — a"}) + "\n")
+    run = D._load_run()
+    assert run["scoring"] == {"target": 3, "scored": 1, "remaining": 2, "complete": False}
+    assert "this run is incomplete" in D.PAGE and "incbanner" in D.PAGE   # page renders the banner
+    # regression guard: the APPLY/STRETCH block must APPEND its heading, not reset #list
+    # (an `L.innerHTML="<h2…"` there wipes the incomplete + malformed banners appended before it)
+    assert 'L.innerHTML="<h2' not in D.PAGE
+    print("✓ dashboard: _load_run reports incomplete scoring (1 of 3); banner renders, not clobbered")
+
+
 def test_dashboard_serves_http():
     import threading
     import urllib.request

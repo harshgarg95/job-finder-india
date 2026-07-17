@@ -181,6 +181,52 @@ def test_evaluate_surfaces_review_before_next_actions():
     print("✓ FIX 3: evaluate.md surfaces the feedback review after top.md, before next-actions; dashboard pointer present")
 
 
+def test_tracker_status_reports_remaining():
+    d = _isolate()
+    json.dump({"ids": ["a", "b", "c"], "target": 3}, open(os.path.join(d, "score_these.json"), "w"))
+    _, out = _run(AT.cmd_tracker, ["--status", "--json"])
+    st = json.loads(out.strip().splitlines()[-1])
+    assert st == {"target": 3, "scored": 0, "remaining": 3, "remaining_ids": ["a", "b", "c"], "complete": False}
+    v = {"job_id": "a", "title": "A", "company": "C", "url": "https://x/1",
+         "verdict": "APPLY", "fit_score": 4.0, "headline": "APPLY — a"}
+    p = os.path.join(d, "va.json"); json.dump(v, open(p, "w"))
+    _run(AT.cmd_tracker, ["--add", p])
+    st2 = json.loads(_run(AT.cmd_tracker, ["--status", "--json"])[1].strip().splitlines()[-1])
+    assert st2["scored"] == 1 and st2["remaining"] == 2 and st2["remaining_ids"] == ["b", "c"] and st2["complete"] is False
+    print("✓ tracker --status: target/scored/remaining/remaining_ids from score_these vs scored.jsonl")
+
+
+def test_tracker_partial_run_stamps_incomplete_banner():
+    d = _isolate()
+    json.dump({"ids": ["a", "b", "c"], "target": 3}, open(os.path.join(d, "score_these.json"), "w"))
+    v = {"job_id": "a", "title": "A", "company": "C", "url": "https://x/1",
+         "verdict": "APPLY", "fit_score": 4.0, "headline": "APPLY — a"}
+    p = os.path.join(d, "va.json"); json.dump(v, open(p, "w"))
+    _run(AT.cmd_tracker, ["--add", p])
+    top = open(os.path.join(d, "top.md"), encoding="utf-8").read()
+    assert "Scored 1 of 3" in top and "incomplete" in top          # partial → LOUD banner
+    for jid in ("b", "c"):                                          # complete the set → banner gone
+        pp = os.path.join(d, f"v{jid}.json"); json.dump(dict(v, job_id=jid, url=f"https://x/{jid}"), open(pp, "w"))
+        _run(AT.cmd_tracker, ["--add", pp])
+    assert "incomplete" not in open(os.path.join(d, "top.md"), encoding="utf-8").read()
+    print("✓ top.md carries 'Scored N of M — incomplete' on a partial run; gone at N==M")
+
+
+def test_tracker_add_accepts_multi_verdict_jsonl():
+    d = _isolate()
+    jl = os.path.join(d, "batch.jsonl")
+    with open(jl, "w", encoding="utf-8") as f:
+        for jid, verd, sc in (("a", "APPLY", 4.2), ("b", "STRETCH", 3.4), ("c", "DON'T APPLY", 1.5)):
+            f.write(json.dumps({"job_id": jid, "title": jid, "company": "C", "url": f"https://x/{jid}",
+                                "verdict": verd, "fit_score": sc, "headline": f"{verd} — {jid}"}) + "\n")
+    rc, out = _run(AT.cmd_tracker, ["--add", jl])
+    resp = json.loads(out.strip().splitlines()[-1])
+    assert rc == 0 and resp["count"] == 3 and set(resp["added"]) == {"a", "b", "c"}
+    rows = [json.loads(l) for l in open(os.path.join(d, "scored.jsonl"))]
+    assert {r["job_id"] for r in rows} == {"a", "b", "c"}          # all upserted in ONE call
+    print("✓ tracker --add accepts a multi-verdict JSONL (batch) — all upserted in one call")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

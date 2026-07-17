@@ -155,6 +155,10 @@ def cmd_prescreen(argv: list[str]) -> int:
          else couldnt_verify).append(rec if vstatus == "ok" else {**rec, "status": vstatus, "reason": vreason})
     score_these = verifiable[:fs_n]
     backfill_pool = verifiable[fs_n:]
+    # Persist the target so `tracker --status` + the dashboard can tell how many of the
+    # score_these set have verdicts yet — a partial run must never look complete.
+    with open(os.path.join(RESULTS, "score_these.json"), "w", encoding="utf-8") as f:
+        json.dump({"ids": [j["job_id"] for j in score_these], "target": len(score_these)}, f)
     out = {
         "input": rep["input"], "kept": rep["kept"], "cap": rep["cap"],
         "truncated_from": rep["truncated_from"], "by_reason": rep["by_reason"],
@@ -270,62 +274,154 @@ def _find_job(job_id: str) -> dict | None:
     return None
 
 
+def _parse_verdicts(content: str) -> list:
+    """Accept a single verdict object, a JSON array, or JSONL (one per line)."""
+    content = (content or "").strip()
+    if not content:
+        return []
+    try:
+        obj = json.loads(content)
+        return obj if isinstance(obj, list) else [obj]
+    except json.JSONDecodeError:
+        out = []
+        for ln in content.splitlines():
+            ln = ln.strip()
+            if ln:
+                out.append(json.loads(ln))          # a bad line raises → caller reports it
+        return out
+
+
+def scoring_status() -> dict:
+    """Deterministic scoring progress: how many of the persisted score_these target
+    already have a record in scored.jsonl (verdict OR unverifiable). Lets the agent
+    (and the dashboard) tell a partial run from a complete one — no self-report."""
+    ids, target = [], 0
+    sp = os.path.join(RESULTS, "score_these.json")
+    if os.path.exists(sp):
+        try:
+            d = json.load(open(sp, encoding="utf-8"))
+            ids = list(d.get("ids", []))
+            target = int(d.get("target", len(ids)))
+        except Exception:  # noqa: BLE001
+            ids, target = [], 0
+    done = set()
+    scored_path = os.path.join(RESULTS, "scored.jsonl")
+    if os.path.exists(scored_path):
+        for l in open(scored_path, encoding="utf-8"):
+            l = l.strip()
+            if not l:
+                continue
+            try:
+                done.add(json.loads(l).get("job_id"))
+            except json.JSONDecodeError:
+                continue
+    remaining_ids = [i for i in ids if i not in done]
+    scored = target - len(remaining_ids)
+    return {"target": target, "scored": scored, "remaining": len(remaining_ids),
+            "remaining_ids": remaining_ids, "complete": bool(target) and not remaining_ids}
+
+
+def _stamp_incomplete_banner(status: dict) -> None:
+    """Prepend an honest 'Scored N of M — incomplete' banner to top.md when the run
+    is partial. Regenerated on every add (gone at N==M; stays if the agent stops).
+    Writes the file directly — score.py's renderer is untouched."""
+    if not status.get("target") or status.get("complete"):
+        return
+    tpath = os.path.join(RESULTS, "top.md")
+    if not os.path.exists(tpath):
+        return
+    banner = (f"> **⚠️ Scored {status['scored']} of {status['target']} — this run is incomplete "
+              "(a smaller/limited model may have stopped early). Re-run to score the remaining "
+              f"{status['remaining']}.**")
+    lines = open(tpath, encoding="utf-8").read().split("\n")
+    at = next((i + 1 for i, ln in enumerate(lines) if ln.startswith("# ")), 0)
+    lines[at:at] = ["", banner, ""]                     # right under the H1 title
+    open(tpath, "w", encoding="utf-8").write("\n".join(lines))
+
+
 def cmd_tracker(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="jobfinder tracker")
-    ap.add_argument("--add", required=True, help="verdict JSON file, or '-' for stdin")
+    ap.add_argument("--add", help="verdict JSON/JSONL (one or many), or '-' for stdin")
+    ap.add_argument("--status", action="store_true",
+                    help="report scoring progress vs the score_these target (no write)")
+    ap.add_argument("--json", action="store_true", help="machine-readable output")
     a = ap.parse_args(argv)
-    from . import score
-    _, run_cfg, _, _ = _load()
-    verdict = json.load(sys.stdin if a.add == "-" else open(a.add, encoding="utf-8"))
-    if not verdict.get("job_id"):
-        print(json.dumps({"error": "record needs a job_id"}))
+
+    if a.status:
+        print(json.dumps(scoring_status(), ensure_ascii=False))
+        return 0
+    if not a.add:
+        print(json.dumps({"error": "tracker needs --add <file|-> or --status"}))
         return 1
-    # Backfill the origin channel + link/location from the discovery record so
-    # top.md/tracker.md label each job with its source (the verdict schema in
-    # prompts/score-job.md carries url/title/company but not source/location).
-    jrec = _find_job(verdict["job_id"])
-    if jrec:
-        for k in ("source", "link_source", "location", "url", "title", "company"):
-            if not verdict.get(k) and jrec.get(k):
-                verdict[k] = jrec.get(k)
-    # NORMALIZE before persist: coerce fit_score to a number, canonicalize the verdict
-    # case (apply→APPLY), validate required fields (verdict, fit_score, headline). A
-    # record that still fails is flagged malformed → routed to Couldn't-verify with an
-    # explicit reason. So score.py's renderer receives CANONICAL data and never
-    # mis-buckets a lowercase/schema-off verdict as "Filtered out". (score.py untouched.)
+
+    from . import score, state
     from .schema import normalize_record, coerce_fit
-    verdict = normalize_record(verdict)
+    _, run_cfg, _, _ = _load()
+    content = sys.stdin.read() if a.add == "-" else open(a.add, encoding="utf-8").read()
+    try:
+        verdicts = _parse_verdicts(content)
+    except json.JSONDecodeError as e:
+        print(json.dumps({"error": f"couldn't parse verdicts (JSON object / array / JSONL): {e}"}))
+        return 1
+    if not verdicts:
+        print(json.dumps({"error": "no verdicts in input"}))
+        return 1
+    if any(not v.get("job_id") for v in verdicts):
+        print(json.dumps({"error": f"{sum(1 for v in verdicts if not v.get('job_id'))} record(s) "
+                                   "missing a job_id"}))
+        return 1
+
     spath = os.path.join(RESULTS, "scored.jsonl")
-    rows = [json.loads(l) for l in open(spath, encoding="utf-8") if l.strip()] if os.path.exists(spath) else []
-    rows = [normalize_record(r) for r in rows if r.get("job_id") != verdict["job_id"]] + [verdict]  # upsert
+    rows = [normalize_record(json.loads(l)) for l in open(spath, encoding="utf-8") if l.strip()] \
+        if os.path.exists(spath) else []
+    added = []
+    for verdict in verdicts:
+        # Backfill origin channel + link/location from the discovery record (the verdict
+        # schema carries url/title/company but not source/location).
+        jrec = _find_job(verdict["job_id"])
+        if jrec:
+            for k in ("source", "link_source", "location", "url", "title", "company"):
+                if not verdict.get(k) and jrec.get(k):
+                    verdict[k] = jrec.get(k)
+        # NORMALIZE before persist: coerce fit_score, canonicalize verdict case, validate
+        # required fields — a failing record is flagged malformed → Couldn't-verify. So
+        # score.py's renderer gets canonical data and never mis-buckets it. (score.py untouched.)
+        verdict = normalize_record(verdict)
+        rows = [r for r in rows if r.get("job_id") != verdict["job_id"]] + [verdict]   # upsert by job_id
+        added.append(verdict)
     rows.sort(key=lambda v: (-(coerce_fit(v.get("fit_score")) or 0.0), len(v.get("caps_applied", []) or [])))
     with open(spath, "w", encoding="utf-8") as f:
         for r in rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
     funnel = None
     rep_path = os.path.join(RESULTS, "prescreen_report.json")
     if os.path.exists(rep_path):
         rep = json.load(open(rep_path, encoding="utf-8"))
         funnel = {"raw": "?", "candidates": rep.get("input"), "prescreened": rep.get("kept"),
                   "truncated_from": rep.get("truncated_from")}
-    # Full ranked prescreened set + cutoff → top.md renders "Prescreen-filtered
-    # (not individually scored)"; run_timing → the wall-clock footer.
     pp = os.path.join(RESULTS, "prescreened.jsonl")
     prescreened = [json.loads(l) for l in open(pp, encoding="utf-8") if l.strip()] \
         if os.path.exists(pp) else []
     fs_n = int((run_cfg.get("scoring", {}) or {}).get("full_score_top_n", 15))
-    from . import state
     started_at = state.read("run_timing").get("started_at")
     score._update_tracker(rows)
     score._write_outputs(rows, [], RESULTS, int((run_cfg.get("scoring", {}) or {}).get("top_n", 10)),
                          funnel=funnel, prescreened=prescreened, full_score_top_n=fs_n,
                          started_at=started_at)
-    out = {"tracked": len([r for r in rows if not r.get("unverifiable")]),
-           "added": verdict["job_id"], "unverifiable": bool(verdict.get("unverifiable")),
-           "malformed": bool(verdict.get("malformed")),
-           "verdict": verdict.get("verdict"), "fit_score": verdict.get("fit_score")}
-    if verdict.get("malformed"):
-        out["reason"] = verdict.get("reason")           # surfaced, never a silent drop
+    status = scoring_status()
+    _stamp_incomplete_banner(status)                    # honest 'Scored N of M' banner if partial
+
+    out = {"added": [v["job_id"] for v in added], "count": len(added),
+           "tracked": len([r for r in rows if not r.get("unverifiable")]),
+           "scored_of_target": (f"{status['scored']}/{status['target']}" if status["target"] else "n/a"),
+           "remaining": status["remaining"], "complete": status["complete"]}
+    if len(added) == 1:                                 # back-compat single-verdict fields
+        v = added[0]
+        out.update({"verdict": v.get("verdict"), "fit_score": v.get("fit_score"),
+                    "unverifiable": bool(v.get("unverifiable")), "malformed": bool(v.get("malformed"))})
+        if v.get("malformed"):
+            out["reason"] = v.get("reason")
     print(json.dumps(out, ensure_ascii=False))
     return 0
 
