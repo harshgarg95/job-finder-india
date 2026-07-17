@@ -178,6 +178,8 @@ PAGE = r"""<!doctype html><html lang=en><head><meta charset=utf-8>
  .s-apply{color:var(--met)} .s-stretch{color:var(--part)} .s-dont{color:var(--miss)} .s-cv{color:var(--part);font-size:20px}
  .ttl{font-size:15px;font-weight:600} .meta{color:var(--mut);font-size:12.5px;margin-top:3px}
  .cvreason{color:var(--part);font-size:12.5px;margin-top:5px}
+ .capnote{color:var(--part);font-size:12px;font-weight:600;margin:9px 0 2px;border:1px solid #4a3a16;
+   background:#2a2410;border-radius:6px;padding:4px 9px;display:inline-block}
  .vsrc{border:1px solid var(--line);border-radius:6px;padding:0 6px;margin-left:4px;font-size:11px;color:var(--mut)}
  ul.why{margin:12px 0 4px;padding-left:18px} ul.why li{margin:3px 0;color:#cfd5e0}
  .quals{margin:12px 0 4px;background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
@@ -227,7 +229,8 @@ const vlabel=v=>(v||"").startsWith("DON")?"DON'T APPLY":v;
 
 function whyBullets(h){
  if(!h) return "";
- let t=h.replace(/^\s*(APPLY|STRETCH|DON'?T APPLY)\s*[—\-]\s*/i,"");
+ let t=h.replace(/^⚖️ Cap enforced: [\d.]+ → [\d.]+(?: \([^)]*\))?\.\s*/,"")  // shown separately as a badge
+        .replace(/^\s*(APPLY|STRETCH|DON'?T APPLY)\s*[—\-]\s*/i,"");
  const parts=t.split(/;\s+|\s—\s/).map(x=>x.trim()).filter(Boolean);
  return "<ul class=why>"+parts.map(p=>`<li>${esc(p)}</li>`).join("")+"</ul>";
 }
@@ -302,6 +305,7 @@ function makeCard(j){
  const vk=vkey(j.verdict);
  const el=document.createElement("div"); el.className="job";
  const vsrc=j.link_verified?`<span class=vsrc>✓ ${esc(j.link_source||"verified")}</span>`:"";
+ const cap=j.cap_enforced?`<div class=capnote>⚖️ cap enforced: ${(+j.cap_enforced.from).toFixed(1)} → ${(+j.cap_enforced.to).toFixed(1)}${j.cap_enforced.by?` — ${esc(j.cap_enforced.by)}`:""}</div>`:"";
  el.innerHTML=
    `<div class=row1>
       <div class="score s-${vk}">${Number.isFinite(+j.fit_score)?(+j.fit_score).toFixed(1):"?"}<small>${esc((j.score_range&&j.score_range[0]!=j.score_range[1])?j.score_range.join("–"):"")}</small></div>
@@ -311,7 +315,7 @@ function makeCard(j){
         <div class=meta>${esc(j.company)} · ${esc(j.location||"")} ${vsrc}</div>
       </div>
     </div>
-    ${whyBullets(j.headline)}${qualsBlock(j)}${skillsLine(j)}
+    ${cap}${whyBullets(j.headline)}${qualsBlock(j)}${skillsLine(j)}
     ${j.url?`<a class=link href="${esc(j.url)}" target=_blank rel=noopener>open verified JD ↗</a>`:""}
     <div class=actionhost></div>`;
  mountActions(el,j);

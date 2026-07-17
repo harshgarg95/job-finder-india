@@ -55,6 +55,56 @@ def normalize_verdict_str(v):
     return None
 
 
+_CAP_NUM_RE = re.compile(r"->\s*(-?\d+(?:\.\d+)?)\s*$")   # a caps_applied entry "<name>-><number>"
+
+
+def _verdict_band(score: float) -> str:
+    """Rubric bands (prompts/_rubric.md): >=4.0 APPLY · 3.0–3.9 STRETCH · <3.0 DON'T APPLY."""
+    if score >= 4.0:
+        return "APPLY"
+    if score >= 3.0:
+        return "STRETCH"
+    return "DON'T APPLY"
+
+
+def _cap_values(caps: list) -> tuple:
+    """Return ([parsed cap numbers], [unparseable entries]) from caps_applied."""
+    values, bad = [], []
+    for c in caps:
+        m = _CAP_NUM_RE.search(str(c))
+        (values.append(float(m.group(1))) if m else bad.append(str(c)))
+    return values, bad
+
+
+def _binding_cap_name(caps: list, cap_min: float) -> str:
+    for c in caps:
+        m = _CAP_NUM_RE.search(str(c))
+        if m and abs(float(m.group(1)) - cap_min) < 1e-9:
+            return str(c).split("->")[0].strip()
+    return ""
+
+
+def _enforce_caps(rec2: dict, fit: float, headline: str) -> dict:
+    """Enforce the rubric's law `final = min(holistic, caps)` in code — the model
+    sometimes records caps_applied but doesn't apply them (promoting a DON'T APPLY
+    into STRETCH). If fit_score exceeds the smallest cap, CORRECT it, re-derive the
+    verdict band, annotate `cap_enforced` + a headline note (never silent), and flag
+    unparseable cap strings. Idempotent: after correction fit == cap_min, so re-runs
+    don't re-fire. This enforces _rubric.md; it does not modify it."""
+    values, bad = _cap_values(rec2.get("caps_applied") or [])
+    if bad:
+        rec2 = {**rec2, "cap_parse_warning": bad}          # malformed cap → flagged, score untouched
+    if values:
+        cap_min = min(values)
+        if fit > cap_min + 1e-9:                           # cap recorded but not applied
+            by = _binding_cap_name(rec2.get("caps_applied") or [], cap_min)
+            note = f"⚖️ Cap enforced: {fit:.1f} → {cap_min:.1f}" + (f" ({by})" if by else "") + ". "
+            rec2 = {**rec2, "fit_score": cap_min, "verdict": _verdict_band(cap_min),
+                    "cap_enforced": {"from": fit, "to": cap_min, "by": by},
+                    "headline": note + headline}
+    return rec2
+
+
 def normalize_record(rec: dict) -> dict:
     """Coerce/validate a model-produced verdict record so renderers get canonical data.
     Clean record → fit_score coerced to float + verdict canonicalized. A record that
@@ -82,7 +132,7 @@ def normalize_record(rec: dict) -> dict:
             "withheld_verdict": rec.get("verdict"), "withheld_fit_score": rec.get("fit_score"),
         })
         return out
-    return {**rec, "fit_score": fit, "verdict": verd, "headline": headline}
+    return _enforce_caps({**rec, "fit_score": fit, "verdict": verd, "headline": headline}, fit, headline)
 
 
 @dataclass

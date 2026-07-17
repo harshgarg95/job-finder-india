@@ -227,6 +227,54 @@ def test_tracker_add_accepts_multi_verdict_jsonl():
     print("✓ tracker --add accepts a multi-verdict JSONL (batch) — all upserted in one call")
 
 
+def test_tracker_cap_enforced_lands_in_filtered_with_note():
+    d = _isolate()
+    v = {"job_id": "gl", "title": "Senior Program Manager", "company": "GitLab", "url": "https://x/jobs/1",
+         "verdict": "STRETCH", "fit_score": 3.5, "headline": "STRETCH — remote-Bangalore PgM",
+         "caps_applied": ["seniority_ceiling_under->2.0", "missing_named_methodology->2.5"]}
+    p = os.path.join(d, "v.json"); json.dump(v, open(p, "w"))
+    _run(AT.cmd_tracker, ["--add", p])
+    row = [json.loads(l) for l in open(os.path.join(d, "scored.jsonl"))][0]
+    assert row["fit_score"] == 2.0 and row["verdict"] == "DON'T APPLY"      # capped + re-derived on write
+    top = open(os.path.join(d, "top.md"), encoding="utf-8").read()
+    assert "Cap enforced: 3.5 → 2.0" in top                                 # surfaced in top.md (via headline)
+    assert top.find("Senior Program Manager") > top.find("Filtered out")    # bucketed as DON'T APPLY
+    print("✓ cap-enforced job lands in Filtered with the '3.5 → 2.0' note in top.md (score.py untouched)")
+
+
+def test_discover_refuses_mid_scoring_allows_force():
+    d = _isolate()
+    from jobfinder import state
+    state.STATE_DIR = os.path.join(d, ".state")
+    json.dump({"ids": ["a", "b", "c"], "target": 3}, open(os.path.join(d, "score_these.json"), "w"))
+    open(os.path.join(d, "scored.jsonl"), "w").write(
+        json.dumps({"job_id": "a", "verdict": "APPLY", "fit_score": 4.0, "headline": "x"}) + "\n")   # 1 of 3
+    rc, out = _run(AT.cmd_discover, [])                                     # remaining 2 → refuse (no network)
+    assert rc == 1 and "scoring in progress" in json.loads(out.strip().splitlines()[-1])["error"]
+
+    from jobfinder.discovery import registry
+
+    class Empty:
+        id = "ats"
+        gap_fill_after = None
+        last_errors: list = []
+
+        def enabled(self, cfg):
+            return True
+
+        def fetch(self, q, cfg):
+            return []
+
+    saved = registry.build_providers
+    registry.build_providers = lambda cfg: [Empty()]
+    try:
+        rc2, out2 = _run(AT.cmd_discover, ["--force"])                      # --force bypasses the guard
+    finally:
+        registry.build_providers = saved
+    assert rc2 == 0 and "scoring in progress" not in out2                   # proceeded past the guard
+    print("✓ discover refuses mid-scoring (remaining>0); --force bypasses the guard")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

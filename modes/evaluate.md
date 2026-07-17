@@ -172,6 +172,7 @@ path when the inline marks above get skipped. The agent points to it; the dashbo
 - Score, discover, or enrich anything outside `prescreened.jsonl` / `score_these`.
 - **Re-run `discover` during scoring.** Once discovery + prescreen are done, score ONLY from the
   existing `score_these` / `prescreened.jsonl` — re-discovering mid-flow churns state and wastes quota.
+  (Now enforced: `discover` REFUSES while `tracker --status` shows `remaining > 0`; `--force` overrides.)
 - **Present results, or narrate progress you haven't written**, while `tracker --status` reports
   `remaining > 0`. Finish the `remaining_ids` first; a partial run is never "complete".
 - Invent a citation, or output APPLY without a cited résumé line.

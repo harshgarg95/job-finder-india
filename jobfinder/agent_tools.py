@@ -72,6 +72,15 @@ def _quota_summary(run_cfg: dict) -> dict:
 
 
 def cmd_discover(argv: list[str]) -> int:
+    # FIX 2 — refuse mid-scoring re-discovery (deterministic; the evaluate.md prompt rule
+    # didn't hold — Codex re-ran discover 3× during scoring, re-hitting Adzuna each time).
+    st = scoring_status()
+    if st["target"] and st["remaining"] > 0 and "--force" not in argv:
+        msg = (f"scoring in progress ({st['scored']} of {st['target']} scored, {st['remaining']} "
+               "remaining) — re-running discovery would churn state and waste quota; pass --force to override")
+        progress.emit("discover REFUSED — " + msg)
+        print(json.dumps({"error": msg}, ensure_ascii=False))
+        return 1
     profile, run_cfg, sources, cfg = _load()
     cfg["apify_resolved"] = apify.resolve(cfg)          # start-of-run, read-only
     limit = int((run_cfg.get("discovery", {}) or {}).get("limit_per_channel", 60))
