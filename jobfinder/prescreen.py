@@ -61,10 +61,15 @@ _DEFAULT_NEGATIVE = [
     "people partner", "intern",
 ]
 
-# ── Seniority ABOVE the candidate's honest ceiling (manager / mid-IC) → drop ──
-_SENIOR_OVER = [
-    "director", "vice president", "vp", "svp", "evp", "head of", "chief",
-    "cto", "ceo", "coo", "cpo", "cfo", "principal", "staff", "distinguished",
+# ── Levels ABOVE the line this gate polices, with a band each. A title is dropped
+#    ONLY when its band is above the candidate's OWN `seniority.honest_ceiling`, so a
+#    manager-ceiling user behaves exactly as before while a director-ceiling user keeps
+#    their in-band roles. Titles at or below the line (senior/manager/lead/…) are never
+#    dropped here — the rubric judges those. Bands share _CEILING_RANK's scale.
+_OVER_BANDS = [
+    ("staff", 6), ("principal", 6), ("head of", 6), ("director", 6),
+    ("distinguished", 7), ("vice president", 7), ("vp", 7), ("svp", 7), ("evp", 7),
+    ("chief", 8), ("cto", 8), ("ceo", 8), ("coo", 8), ("cpo", 8), ("cfo", 8),
 ]
 
 # AI qualifiers (whole-word) — gate combo + ranking.
@@ -107,7 +112,16 @@ def _match_any(regexes: list[re.Pattern], text: str):
 
 # Profile-independent patterns, compiled once.
 _NEGATIVE_RX = _compile(_DEFAULT_NEGATIVE)
-_SENIOR_RX = _compile(_SENIOR_OVER)
+
+
+def _over_band(title: str) -> tuple:
+    """Highest above-the-line seniority band named in the title → (band, matched word),
+    or (None, "") when the title states no above-the-line level."""
+    t = (title or "").lower()
+    hits = [(b, kw) for kw, b in _OVER_BANDS if re.search(rf"\b{re.escape(kw)}\b", t)]
+    return max(hits) if hits else (None, "")
+
+
 _AI_RX = _compile(_AI_TERMS)
 _COMBO_RX = _compile(_COMBO_HEADS)
 _INDIA_RX = _compile(_INDIA_TOKENS)
@@ -193,9 +207,13 @@ def _gate(job: JobPosting, profile: dict, run_cfg: dict,
     if not title:
         return False, "no title"
 
-    over = _match_any(_SENIOR_RX, title)
-    if over:
-        return False, f"over-senior title ('{over}' — above your manager/mid ceiling)"
+    # Over-senior ONLY relative to the candidate's own stated ceiling (B-1): a
+    # director-ceiling user keeps Director/Principal/Staff roles; a manager-ceiling
+    # user drops exactly what they always did.
+    ceiling = str((profile.get("seniority", {}) or {}).get("honest_ceiling") or "mid").lower()
+    band, word = _over_band(title)
+    if band is not None and band > _CEILING_RANK.get(ceiling, 2):
+        return False, f"over-senior title ('{word}' — above your stated {ceiling} ceiling)"
 
     if not _is_positive(title, role_rx):
         neg = _match_any(_NEGATIVE_RX, title)

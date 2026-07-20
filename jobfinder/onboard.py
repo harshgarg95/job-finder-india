@@ -81,13 +81,12 @@ def write_profile_md(text: str, force: bool = False) -> str:
 MIN_RESUME_CHARS = 300
 _CEILINGS = {"intern", "junior", "mid", "senior", "lead", "manager", "director"}
 _WORK_MODES = {"remote", "hybrid", "onsite", "mix"}
-# function.out_of_scope drives the wrong-function gate — a sensible default the
-# agent is prompted to review/override after the write (see modes/onboarding.md).
-_DEFAULT_OUT_OF_SCOPE = [
-    "ML research engineer / deep modelling",
-    "Senior data scientist (statistical modelling)",
-    "Backend/platform software engineer (years of production coding)",
-]
+# function.out_of_scope drives the rubric's wrong-function cap. Left EMPTY by design (B-2). One persona's opposites are another's core function —
+# defaulting to "ML research / data science / backend" pre-declared a data scientist's
+# own function out of scope. An unset out_of_scope means the rubric's wrong-function
+# cap simply doesn't fire on an unknown, rather than firing wrongly. The agent proposes
+# real values from the résumé after setup (see modes/onboarding.md).
+_DEFAULT_OUT_OF_SCOPE: list[str] = []
 _DEFAULT_HARD_CONSTRAINTS = ["Must be India-based or fully remote (no relocation outside India)."]
 
 
@@ -242,7 +241,8 @@ def write_from_answers(answers: dict, force: bool = False) -> dict:
 
 # Top-level profile fields that may be UPDATED in place after setup (e.g. the agent
 # proposing better target_roles). Anything else requires re-running onboarding.
-_PATCHABLE = ("target_roles", "honest_ceiling", "base_city", "floor_ctc_lpa", "work_mode")
+_PATCHABLE = ("target_roles", "function_out_of_scope", "honest_ceiling", "base_city",
+              "floor_ctc_lpa", "work_mode")
 
 
 def patch_profile(updates: dict) -> dict:
@@ -267,6 +267,10 @@ def patch_profile(updates: dict) -> dict:
             prof["target_roles"]["archetypes"] = [{"name": r, "fit": "primary"} for r in roles]
             prof.setdefault("function", {})["in_scope"] = list(roles)   # mirror → reaches prescreen
             applied["target_roles"] = roles
+        elif k == "function_out_of_scope":
+            vals = [str(x).strip() for x in (v if isinstance(v, list) else _split(str(v))) if str(x).strip()]
+            prof.setdefault("function", {})["out_of_scope"] = vals
+            applied["function_out_of_scope"] = vals
         elif k == "honest_ceiling":
             if str(v).lower() not in _CEILINGS:
                 return {"error": f"honest_ceiling must be one of {sorted(_CEILINGS)}"}
@@ -646,9 +650,13 @@ def _interactive() -> int:
         return 1
 
     print(f"\n✓ wrote {', '.join(res['wrote'])}")
-    oos = ", ".join(_answers_to_profile(a)["function"]["out_of_scope"])
-    print(f"→ Roles you'll be gated OUT of (function.out_of_scope): {oos}")
-    print("  Edit config/profile.yml if that's wrong — it drives the wrong-function gate.")
+    oos = _answers_to_profile(a)["function"]["out_of_scope"]
+    if oos:
+        print(f"→ Roles you'll be gated OUT of (function.out_of_scope): {', '.join(oos)}")
+        print("  Edit config/profile.yml if that's wrong — it drives the wrong-function gate.")
+    else:
+        print("→ function.out_of_scope is empty — the wrong-function gate won't fire until it's set.")
+        print("  Say 'find me jobs' in your CLI and it can propose one from your résumé.")
     print("→ Run `python -m jobfinder doctor` to confirm READY, then say 'find me jobs' in your CLI.")
     return 0
 

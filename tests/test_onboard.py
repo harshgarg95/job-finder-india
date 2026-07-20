@@ -53,7 +53,7 @@ def test_answers_writes_valid_profile_and_resume():
     assert prof["compensation"]["floor_ctc_lpa"] == 20
     # function.* auto-derived from target_roles
     assert prof["function"]["in_scope"] == prof["target_roles"]["primary"]
-    assert prof["function"]["out_of_scope"]                # non-empty default
+    assert prof["function"]["out_of_scope"] == []           # B-2: empty by default, not one persona's opposites
     print("✓ --answers writes a valid profile.yml + resume.md; function.* derived")
 
 
@@ -249,7 +249,7 @@ def test_empty_target_roles_safe_end_to_end():
     assert "error" not in res
     prof = yaml.safe_load(open(os.path.join(d, "config", "profile.yml"), encoding="utf-8"))
     assert prof["target_roles"]["primary"] == []                  # empty is allowed
-    assert prof["function"]["out_of_scope"]                       # wrong-function cap still has fuel
+    assert prof["function"]["out_of_scope"] == []                 # B-2: empty → cap won't fire on an unknown
     assert doctor._profile_ready(os.path.join("config", "profile.yml"))   # READY with empty roles
     from jobfinder.prescreen import prescreen_set
     from jobfinder.schema import JobPosting
@@ -320,6 +320,32 @@ def test_resume_derived_target_roles_prefills():
     prof = yaml.safe_load(open(os.path.join(d, "config", "profile.yml"), encoding="utf-8"))
     assert prof["target_roles"]["primary"] == parsed["target_roles"]   # suggestion accepted as-is
     print("✓ résumé-derived target_roles pre-fill and are accepted with Enter")
+
+
+def test_out_of_scope_defaults_empty_not_one_persona():
+    # B-2: a skipped out_of_scope must be EMPTY, never the ML/DS/backend list — that
+    # pre-declared a data scientist's own function out of scope.
+    assert onboard._DEFAULT_OUT_OF_SCOPE == []
+    prof = onboard._answers_to_profile({"target_roles": ["Data Scientist"], "work_mode": "remote"})
+    assert prof["function"]["out_of_scope"] == []
+    for banned in ("ML research", "data scientist", "Backend"):
+        assert not any(banned.lower() in s.lower() for s in prof["function"]["out_of_scope"])
+    # a caller-supplied value is still honoured
+    supplied = onboard._answers_to_profile({"target_roles": ["PM"], "work_mode": "remote",
+                                            "function_out_of_scope": ["Front-end engineering"]})
+    assert supplied["function"]["out_of_scope"] == ["Front-end engineering"]
+    print("✓ out_of_scope defaults to empty (no persona bias); a supplied value still wins")
+
+
+def test_set_function_out_of_scope_patches_profile():
+    d = _root()
+    onboard.write_from_answers(_full_answers(), force=True)
+    rc = onboard.cmd(["--set", "function_out_of_scope=ML research engineer,Backend software engineering"])
+    assert rc == 0
+    prof = yaml.safe_load(open(os.path.join(d, "config", "profile.yml"), encoding="utf-8"))
+    assert prof["function"]["out_of_scope"] == ["ML research engineer", "Backend software engineering"]
+    assert prof["candidate"]["full_name"] == "Harsh Garg"        # everything else preserved
+    print("✓ --set function_out_of_scope patches in place (the agent's write path for the review)")
 
 
 def test_agents_gate_routes_to_terminal_no_bypass():

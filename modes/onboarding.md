@@ -57,6 +57,18 @@ should actually target. You can infer better from the real experience; a regex c
    `--set` updates ONLY `target_roles` (and mirrors `function.in_scope`, which prescreen reads);
    every other field is preserved. The same `--set` can correct a mis-answered field without redoing
    onboarding — `work_mode`, `honest_ceiling`, `base_city`, `floor_ctc_lpa` (unknown keys are refused).
+5. **Also propose `function.out_of_scope`** — same enhancement-not-gate pattern. Onboarding leaves it
+   **empty on purpose**: one persona's opposites are another's core function (defaulting it to
+   "ML research / data science / backend" would pre-declare a data scientist's own job out of scope).
+   Empty is safe — the rubric's wrong-function cap simply doesn't fire on an unknown. From the résumé,
+   propose 2–4 **adjacent-but-different** functions this person should NOT be matched into (for a
+   delivery/PM profile: "ML research engineer"; for a data scientist: "front-end engineering"), show
+   them as a numbered confirm/edit, and on accept:
+   ```
+   python -m jobfinder onboard --set function_out_of_scope="ML research engineer,Backend software engineering"
+   ```
+   If the user skips this or you're a weak model, **empty stands** and the run still works — the
+   wrong-function cap just won't fire. Never invent exclusions the résumé doesn't support.
 
 ## Then
 Re-run `python -m jobfinder doctor --json`, confirm `profile` is gone from `missing_required`, then

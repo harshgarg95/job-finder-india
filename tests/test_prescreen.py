@@ -68,6 +68,22 @@ def test_over_senior_titles_dropped():
     assert len(prescreen_set([_job("Senior Product Manager, AI")], PROF, RUN)[0]) == 1
 
 
+def test_over_senior_gate_respects_profile_ceiling():
+    # B-1: the gate must compare against the user's OWN honest_ceiling, not a fixed one.
+    director = {**PROF, "seniority": {"years_total": 12, "honest_ceiling": "director"}}
+    # Titles in the target role family (so they clear the FUNCTION gate) that sit at the
+    # director band — this isolates the seniority gate, which is what B-1 changed.
+    for t in ("Principal Program Manager", "Staff Technical Program Manager"):
+        assert len(prescreen_set([_job(t)], director, RUN)[0]) == 1, t   # director KEEPS them (the fix)
+        assert prescreen_set([_job(t)], PROF, RUN)[0] == [], t           # manager still drops them
+    # above a director's band → still dropped even at a director ceiling
+    assert prescreen_set([_job("VP Program Manager")], director, RUN)[0] == []
+    # in-band titles are never touched at either ceiling
+    assert len(prescreen_set([_job("Senior Product Manager, AI")], PROF, RUN)[0]) == 1
+    assert len(prescreen_set([_job("Senior Product Manager, AI")], director, RUN)[0]) == 1
+    print("✓ over-senior gate is profile-driven: director keeps in-band roles, manager unchanged")
+
+
 def test_location_hard_constraints():
     keep_hyd = _job("AI Program Manager", location="Hyderabad, Telangana, India")
     keep_remote = _job("AI Program Manager", location="Remote, India")
