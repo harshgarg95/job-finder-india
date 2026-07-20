@@ -44,6 +44,90 @@ _REMOTE_RE = re.compile(
 )
 
 
+# ── Location classification — ONE source of truth (discovery filter + prescreen gate) ──
+# The leak this closes: a foreign role whose channel sets `remote` (Harvey/Munich,
+# "Remote - Colombia", "Remote, North America") slipped past both the discovery filter
+# and the gate, because neither had the city/country and both short-circuited on "remote".
+_INDIA_WORDS = [
+    "india", "bharat", "hyderabad", "secunderabad", "bengaluru", "bangalore", "mumbai",
+    "pune", "delhi", "new delhi", "gurgaon", "gurugram", "noida", "chennai", "kolkata",
+    "ahmedabad", "jaipur", "indore", "kochi", "cochin", "coimbatore", "chandigarh",
+    "trivandrum", "thiruvananthapuram", "nagpur", "vadodara", "bhubaneswar", "mysuru",
+    "mysore", "visakhapatnam", "surat", "lucknow", "kanpur", "goa", "ncr",
+    "telangana", "karnataka", "maharashtra", "tamil nadu", "kerala", "gujarat",
+    "west bengal", "haryana", "punjab", "rajasthan", "odisha", "andhra pradesh",
+    "uttar pradesh", "madhya pradesh",
+]
+# NOTE: APAC / "asia pacific" are deliberately NOT here — they INCLUDE India.
+_FOREIGN_WORDS = [
+    # countries
+    "united states", "usa", "us", "united kingdom", "uk", "england", "scotland", "ireland",
+    "canada", "mexico", "brazil", "colombia", "argentina", "chile", "peru", "france",
+    "germany", "spain", "portugal", "italy", "netherlands", "belgium", "switzerland",
+    "austria", "sweden", "norway", "denmark", "finland", "poland", "czech", "romania",
+    "hungary", "greece", "turkey", "russia", "ukraine", "israel", "saudi arabia",
+    "united arab emirates", "uae", "qatar", "kuwait", "bahrain", "oman", "egypt",
+    "south africa", "nigeria", "kenya", "morocco", "australia", "new zealand", "japan",
+    "south korea", "korea", "china", "hong kong", "taiwan", "singapore", "malaysia",
+    "indonesia", "thailand", "vietnam", "philippines", "pakistan", "bangladesh",
+    "sri lanka", "nepal",
+    # major cities
+    "london", "manchester", "dublin", "paris", "berlin", "munich", "hamburg", "frankfurt",
+    "madrid", "barcelona", "lisbon", "milan", "rome", "vienna", "zurich", "geneva",
+    "amsterdam", "rotterdam", "brussels", "stockholm", "oslo", "copenhagen", "helsinki",
+    "warsaw", "prague", "budapest", "istanbul", "tel aviv", "dubai", "abu dhabi",
+    "riyadh", "doha", "cairo", "johannesburg", "cape town", "lagos", "nairobi",
+    "new york", "san francisco", "seattle", "boston", "chicago", "austin", "dallas",
+    "houston", "denver", "atlanta", "miami", "los angeles", "san jose", "san diego",
+    "phoenix", "philadelphia", "washington dc", "toronto", "vancouver", "montreal",
+    "sydney", "melbourne", "brisbane", "perth", "auckland", "wellington", "tokyo",
+    "osaka", "seoul", "beijing", "shanghai", "shenzhen", "taipei", "kuala lumpur",
+    "jakarta", "bangkok", "manila", "hanoi", "karachi", "lahore", "dhaka", "colombo",
+    # regions that EXCLUDE India
+    "emea", "amer", "americas", "north america", "south america", "latam",
+    "latin america", "middle east", "mea", "anz", "benelux", "nordics", "dach",
+    "europe", "africa",
+]
+_REMOTE_WORDS = ("remote", "anywhere", "work from home", "wfh", "distributed")
+
+
+def _words_rx(tokens: list[str]) -> re.Pattern:
+    longest_first = sorted(tokens, key=len, reverse=True)
+    return re.compile(r"\b(?:" + "|".join(re.escape(t) for t in longest_first) + r")\b", re.I)
+
+
+_INDIA_WORD_RX = _words_rx(_INDIA_WORDS)
+_FOREIGN_WORD_RX = _words_rx(_FOREIGN_WORDS)
+
+
+def classify(loc: str) -> str:
+    """Classify a job location string:
+
+      "india"                 — an Indian city/state, or "India"
+      "remote_india_eligible" — remote with NO foreign qualifier (bare "Remote",
+                                "Remote (Global)"), or remote tied to India
+      "foreign"               — names a non-India country/city/region, INCLUDING a
+                                remote with a foreign qualifier ("Remote - Colombia",
+                                "Remote, North America", "Remote, UAE", EMEA/ANZ/MEA)
+      "unknown"               — blank or unrecognisable (must NOT be treated as a fit;
+                                it flows to the location_unverified path)
+
+    India-positive wins on collisions (e.g. "Amer, Jaipur" is India, not AMER)."""
+    norm = re.sub(r"\.", "", (loc or "").strip().lower())
+    if not norm:
+        return "unknown"
+    india = bool(_INDIA_WORD_RX.search(norm))
+    foreign = bool(_FOREIGN_WORD_RX.search(norm))
+    remote = any(w in norm for w in _REMOTE_WORDS)
+    if foreign and not india:
+        return "foreign"
+    if india:
+        return "remote_india_eligible" if remote else "india"
+    if remote:
+        return "remote_india_eligible"
+    return "unknown"
+
+
 def is_coarse(loc: str) -> bool:
     """True when the location string has no resolvable city (India or foreign) —
     the onsite gate is then blind and could leak an onsite-elsewhere role."""
@@ -52,8 +136,8 @@ def is_coarse(loc: str) -> bool:
         return True
     if any(c in l for c in _ps._INDIA_CITIES):
         return False
-    if _ps._match_any(_ps._FOREIGN_RX, l):
-        return False   # a foreign city is resolvable; prescreen's foreign gate handles it
+    if _FOREIGN_WORD_RX.search(re.sub(r"\.", "", l)):
+        return False   # a foreign city is resolvable; the gate's foreign check handles it
     return True
 
 

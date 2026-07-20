@@ -80,13 +80,8 @@ _INDIA_CITIES = [
 ]
 _INDIA_TOKENS = _INDIA_CITIES + ["india", "bharat", "telangana", "karnataka",
                                  "maharashtra", "tamil nadu", "kerala"]
-_FOREIGN_TOKENS = [
-    "united states", "usa", "us", "u.s", "united kingdom", "uk", "canada", "france",
-    "germany", "netherlands", "spain", "mexico", "singapore", "dubai", "uae",
-    "australia", "ireland", "europe", "emea", "americas", "brazil", "poland",
-    "japan", "china", "london", "new york", "san francisco", "seattle", "toronto",
-    "california",
-]
+# Foreign classification now lives in ONE place — location.classify() (used by both
+# this gate and the discovery filter). The stale list that used to sit here is gone.
 _REMOTE_TOKENS = ["remote", "anywhere", "work from home", "wfh"]
 
 
@@ -116,7 +111,6 @@ _SENIOR_RX = _compile(_SENIOR_OVER)
 _AI_RX = _compile(_AI_TERMS)
 _COMBO_RX = _compile(_COMBO_HEADS)
 _INDIA_RX = _compile(_INDIA_TOKENS)
-_FOREIGN_RX = _compile(_FOREIGN_TOKENS)
 
 
 def _profile_positives(profile: dict) -> list[str]:
@@ -166,20 +160,25 @@ def _structured_gate(job: JobPosting, profile: dict, run_cfg: dict) -> tuple[boo
 def _location_gate(job: JobPosting, profile: dict) -> tuple[bool, str]:
     """Hard constraints: drop foreign roles (even if remote — not India-eligible)
     and onsite roles in a non-allowed city. Remote-India / unknown pass through."""
-    loc = (job.location or "").lower().strip()
-    if not loc:
-        return True, ""
-
-    foreign = _match_any(_FOREIGN_RX, loc)
-    india = _match_any(_INDIA_RX, loc)
-    if foreign and not india:
-        return False, f"foreign location ('{foreign}' — not India-eligible)"
-
+    from . import location as _loc          # lazy: location.py imports this module
     locp = profile.get("location", {}) or {}
+    cls = _loc.classify(job.location)
+    # FOREIGN (incl. a remote tied to a foreign region — "Remote - Colombia",
+    # "Remote, North America") is DISQUALIFIED for a no-relocation profile: it never
+    # reaches scoring or consumes a scoring slot. Profile-driven, not hard-coded.
+    if cls == "foreign" and not locp.get("willing_to_relocate"):
+        return False, (f"foreign location ('{(job.location or '').strip()}') — not India-eligible "
+                       "and you're not open to relocating")
     if locp.get("willing_to_relocate"):
         return True, ""
+    # remote-eligible passes; "unknown" passes HERE and is resolved after enrich by
+    # location.regate → location_unverified (couldn't-verify), never scored as a fit.
+    if cls in ("remote_india_eligible", "unknown"):
+        return True, ""
+
+    loc = (job.location or "").lower().strip()          # cls == "india" → onsite-city gate
     if job.remote or any(t in loc for t in _REMOTE_TOKENS):
-        return True, ""  # remote handled (India-eligibility checked above)
+        return True, ""
     onsite = [c.lower() for c in (locp.get("onsite_cities") or [])]
     named = [c for c in _INDIA_CITIES if c in loc]
     if named and onsite and not any(o in loc for o in onsite):

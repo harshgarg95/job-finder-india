@@ -93,6 +93,53 @@ def test_helpers():
     print("✓ is_coarse / derive_cities / looks_remote helpers")
 
 
+FOREIGN_LEAKS = ["Munich", "Sydney", "Dallas", "Amsterdam", "Seoul, South Korea", "Switzerland",
+                 "Remote, United Arab Emirates", "Remote; Remote, United Arab Emirates",
+                 "Remote - Colombia", "Remote, North America"]
+INDIA_OK = ["Hyderabad", "Bengaluru", "Remote", "Remote - India", "Remote, India", "India",
+            "Remote (Global)", "Hyderabad, Telangana, India"]
+
+
+def test_classify_foreign_vs_india_eligible():
+    for loc in FOREIGN_LEAKS:
+        assert LOC.classify(loc) == "foreign", loc
+    for loc in INDIA_OK:
+        assert LOC.classify(loc) in ("india", "remote_india_eligible"), loc
+    assert LOC.classify("") == "unknown"
+    assert LOC.classify("Amer, Jaipur") == "india"        # India-positive wins on collisions
+    print("✓ classify: the 10 leaked foreign strings are foreign; India/remote strings are eligible")
+
+
+def test_gate_disqualifies_foreign_for_no_relocation_profile():
+    from jobfinder.prescreen import _location_gate
+    for loc in FOREIGN_LEAKS:                              # remote flag set → the old leak path
+        ok, why = _location_gate(_job(loc, "jd", remote="remote"), PROFILE)
+        assert ok is False and "foreign" in why, loc
+    for loc in ["Hyderabad, Telangana, India", "Remote", "Remote - India", "Remote, India"]:
+        assert _location_gate(_job(loc, "jd"), PROFILE)[0] is True, loc
+    # profile-driven: a relocation-open candidate still sees them
+    relo = {"location": {"onsite_cities": ["Hyderabad"], "remote_ok": True, "willing_to_relocate": True}}
+    assert all(_location_gate(_job(loc, "jd"), relo)[0] is True for loc in FOREIGN_LEAKS)
+    print("✓ gate disqualifies foreign for a no-relocation profile; relocation-open still sees them")
+
+
+def test_discovery_filter_drops_foreign_keeps_unknown():
+    from jobfinder.filters import location_ok
+    # foreign (with the channel's remote flag set — the exact discovery leak) → dropped
+    assert location_ok(_job("Munich", "jd", remote="remote"), PROFILE) is False
+    assert location_ok(_job("Remote - Colombia", "jd"), PROFILE) is False
+    # unknown MUST still enter candidates.jsonl (it has to reach location_unverified)
+    assert location_ok(_job("", "jd"), PROFILE) is True
+    assert location_ok(_job("Somewhereville", "jd"), PROFILE) is True
+    # remote-eligible + india pass
+    assert location_ok(_job("Remote", "jd"), PROFILE) is True
+    assert location_ok(_job("Hyderabad, India", "jd"), PROFILE) is True
+    # relocation-open → no foreign filtering at discovery either
+    relo = {"location": {"willing_to_relocate": True}}
+    assert location_ok(_job("Munich", "jd"), relo) is True
+    print("✓ discovery filter drops foreign (no-relo) but never drops unknown / remote-eligible")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

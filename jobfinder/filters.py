@@ -13,29 +13,10 @@ import re
 
 from .schema import JobPosting
 
-# Indian places (and "india"); "remote"/"hybrid"/"anywhere" handled separately.
-_INDIA_TOKENS = [
-    "india", "bharat",
-    "bengaluru", "bangalore", "hyderabad", "mumbai", "pune", "delhi", "new delhi",
-    "gurgaon", "gurugram", "noida", "chennai", "kolkata", "ahmedabad", "jaipur",
-    "indore", "kochi", "coimbatore", "chandigarh", "trivandrum", "thiruvananthapuram",
-    "ncr", "telangana", "karnataka", "maharashtra", "tamil nadu",
-]
-
-# Foreign regions: a "remote" tied to one of these is NOT India-eligible.
-_FOREIGN_TOKENS = [
-    "united states", "u.s.", "usa", " us ", "us-", "-us", "us,", " us)", "(us",
-    "united kingdom", " uk", "uk ", "canada", "france", "germany", "netherlands",
-    "spain", "mexico", "singapore", "dubai", "uae", "australia", "ireland",
-    "poland", "brazil", "denmark", "sweden", "emea", "americas", "apac", "europe",
-    " eu ", "| eu", "eu |", "china", "japan", "tokyo", "italy", "cyprus", "argentina",
-    "buenos aires", "san francisco", "new york", "seattle", "london", "toronto",
-    "chicago", "atlanta", "foster city", "california", " ca", "virginia", "ohio",
-    "georgia", "arizona", "texas", "boston", "austin", "denver",
-    # US state abbreviations commonly seen in ATS location strings
-    " ny", " sf", " sea", " va", " wa", " tx", " il",
-]
-_REMOTE_TOKENS = ["remote", "anywhere", "work from home", "wfh"]
+# India/foreign/remote classification lives in ONE place — jobfinder/location.py
+# (`classify`). The stale per-module token lists that used to live here are gone:
+# they were what let a foreign role with the channel's `remote` flag set (Munich,
+# "Remote - Colombia") slip through discovery.
 
 
 def location_ok(job: JobPosting, profile: dict) -> bool:
@@ -46,22 +27,13 @@ def location_ok(job: JobPosting, profile: dict) -> bool:
     (e.g. 'US - Remote', 'Remote - France') — is dropped. The scorer still
     double-checks location and can cite a mismatch on anything that slips
     through."""
-    loc = (job.location or "").lower().strip()
-    if not loc:
-        return True  # unknown -> let the scorer judge
-    remote_ok = (profile.get("location", {}) or {}).get("remote_ok", True)
-
-    has_india = any(tok in loc for tok in _INDIA_TOKENS)
-    has_foreign = any(tok in loc for tok in _FOREIGN_TOKENS)
-    is_remote = any(tok in loc for tok in _REMOTE_TOKENS) or bool(job.remote)
-
-    if has_india:
-        return True                       # India named -> keep (even if multi-region)
-    if has_foreign:
-        return False                      # foreign named, India not -> drop
-    if is_remote:
-        return remote_ok                  # unscoped remote -> keep if user allows remote
-    return False                          # names some non-India place, not remote
+    from .location import classify        # ONE source of truth (same call the gate uses)
+    if (profile.get("location", {}) or {}).get("willing_to_relocate"):
+        return True                       # relocation-open -> no foreign filtering at discovery
+    # Drop ONLY a clearly-foreign location. "unknown" and "remote_india_eligible" MUST
+    # pass: an unknown location has to reach the gate's location_unverified →
+    # couldn't-verify path (surfaced, not hidden at discovery).
+    return classify(job.location) != "foreign"
 
 
 def _keywords_from_profile(profile: dict, query_titles: list[str]) -> list[str]:
