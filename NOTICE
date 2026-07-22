@@ -1,0 +1,25 @@
+Job Finder India — NOTICE
+How your data & credentials are handled
+========================================
+
+1. Your AI assistant's credentials
+   Scoring runs inside the AI CLI you already use (Claude Code, Codex, Copilot, ...),
+   under that assistant's own login. This tool never sees, stores, or transmits your
+   model credentials, and it holds no AI API key of its own.
+
+2. Job data
+   Job postings come from official and free APIs — the public ATS JSON endpoints
+   (Greenhouse, Lever, Ashby, Workable, Workday, SmartRecruiters) and the official
+   Adzuna API — and, optionally, from third-party APIs you enable with your own keys
+   (JSearch, SerpAPI, Apify). Those providers do their own collection under their own
+   terms. This tool does not scrape websites that block automated access: blocked
+   sites are detected and skipped, never worked around.
+
+3. Your résumé and profile
+   resume.md, config/profile.yml, config/preferences.yml, .env, and everything under
+   data/ stay on your machine. They are excluded from version control (.gitignore)
+   and are never uploaded by this tool. The only content that leaves your machine is
+   the job text your own AI assistant reads in order to score it, under that
+   assistant's terms.
+
+See DATA_CONTRACT.md for the full data contract, and LICENSE for the license (MIT).

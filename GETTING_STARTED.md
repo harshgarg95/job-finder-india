@@ -94,7 +94,8 @@ your résumé:
   (remote / hybrid / on-site) and whether you're **open to relocating**.
 - Everything else — name, city, years, target roles — is pre-filled; just glance and hit Enter.
 
-> [SCREENSHOT: the onboarding work-mode menu, showing the arrow-key options]
+*(What you'll see: a small list — Remote / Hybrid / On-site / Open to a mix — that you move
+through with ↑/↓ and confirm with Enter.)*
 
 When it finishes it writes two files for you (`resume.md` and `config/profile.yml`) and tells you
 what to do next. **Glance at the target roles it picked up** — they're in `config/profile.yml` and
@@ -143,7 +144,8 @@ That's it — plain English. The tool will:
 
 Every verdict comes with a reason tied to your résumé — not a black-box number.
 
-> [SCREENSHOT: a sample results view showing an APPLY and a DON'T APPLY with reasons]
+*(What you'll see: each job as a scored entry — e.g. "4.2 · APPLY — Technical Program Manager,
+with the résumé-line reasons" — and further down, the DON'T APPLYs each with their reason.)*
 
 The full report is saved at `data/results/top.md` — open it any time (on macOS:
 `open data/results/top.md`).
@@ -161,7 +163,8 @@ one you can click **Applied**, **Interested**, or **Not suitable** — and the t
 quietly down-ranking the kinds of jobs you reject in future runs. Press Ctrl-C in the terminal to
 stop it.
 
-> [SCREENSHOT: the dashboard with the Applied / Interested / Not suitable buttons]
+*(What you'll see: each scored job as a card with three buttons under it —
+Applied · Interested · Not suitable.)*
 
 ---
 

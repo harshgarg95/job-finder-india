@@ -75,13 +75,21 @@ Volume is bounded by design: a deterministic prescreen cuts candidates to a few 
 `scoring.full_score_top_n` (default 15) are fully scored. **A run cannot balloon into thousands of
 calls.** Every run prints the funnel (`candidates → prescreened → scored`) and the free-tier left.
 
-## Privacy
+## How your data & credentials are handled
 
-**Your résumé, profile, and results stay on your machine.** `resume.md`, `config/profile.yml`,
-`config/preferences.yml`, `.env`, and everything under `data/` are **gitignored** — they are never
-committed and never uploaded. The only data that leaves your computer is the job text your own AI
-CLI reads in order to score, under that CLI's own terms. See
-[DATA_CONTRACT.md](DATA_CONTRACT.md).
+- **Your AI login is never touched.** Scoring runs inside the AI CLI you already use, under that
+  assistant's own login — this tool never sees, stores, or transmits your model credentials, and
+  holds no AI API key of its own.
+- **Job data comes from APIs, not scraping.** Official/free APIs (public ATS JSON, the official
+  Adzuna API) plus optional third-party APIs you enable with your own keys (JSearch, SerpAPI,
+  Apify) that do their own collection under their own terms. Sites that block bots are **detected
+  and skipped** — never scraped around.
+- **Your résumé, profile, and results stay on your machine.** `resume.md`, `config/profile.yml`,
+  `config/preferences.yml`, `.env`, and everything under `data/` are **gitignored** — never
+  committed, never uploaded. The only content that leaves your computer is the job text your own
+  AI CLI reads in order to score, under that CLI's terms.
+
+Full statement: [NOTICE](NOTICE) · [DATA_CONTRACT.md](DATA_CONTRACT.md).
 
 ## How it works
 
