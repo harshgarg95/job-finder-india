@@ -1,0 +1,76 @@
+# Daily discovery smoke — the API-drift early-warning canary.
+#
+# Runs doctor (setup-file integrity) + ONE minimal real request per free
+# discovery channel (ATS families · Adzuna · JSearch) via
+# scripts/discovery_smoke.py, and FAILS if a channel errors or its response
+# shape stops parsing into well-formed postings (the JSearch v1→v5 class of
+# breakage). On failure GitHub emails the repo owner automatically (watch the
+# repo + keep "Actions" notifications on in github.com/settings/notifications).
+#
+# Setup (one time) — add repo secrets under Settings → Secrets and variables →
+# Actions:   ADZUNA_APP_ID · ADZUNA_APP_KEY · JSEARCH_API_KEY
+# Missing secrets don't fail the run: that channel is reported SKIP with a
+# warning annotation. Free-tier cost of daily: ~30 req/month per keyed channel
+# (of Adzuna ~250 / JSearch ~200) + a few keyless ATS calls. Daily is enough —
+# do not schedule this more often.
+#
+# NOTE: GitHub pauses scheduled workflows after ~60 days without repo activity
+# (public repos) — it emails you first; one click re-enables it.
+name: discovery-smoke
+
+on:
+  schedule:
+    - cron: "7 3 * * *"        # 03:07 UTC ≈ 08:37 IST, daily (off-peak, not :00)
+  workflow_dispatch:            # manual "run now" button for testing
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt
+
+      # resume.md / config/*.yml are user files (gitignored) — seed a neutral CI
+      # profile so doctor + the providers have real config files to run against.
+      # (The answers file is written to RUNNER_TEMP because onboard deletes it
+      # after a successful write, by design.)
+      - name: Seed CI profile
+        run: |
+          cat > "$RUNNER_TEMP/ci_answers.json" <<'EOF'
+          {
+            "name": "CI Smoke",
+            "resume_text": "CI smoke-test profile (synthetic, no personal data). Program manager with eight years of experience delivering B2B SaaS implementations and cross-functional programs: requirements scoping, rollout planning, stakeholder and vendor management, process automation, and reporting. Led distributed delivery teams, ran UAT cycles, and owned customer onboarding programs end to end. This text exists only so the discovery smoke test has a valid, doctor-ready setup in CI.",
+            "target_roles": ["Program Manager"],
+            "work_mode": "remote",
+            "base_city": "Bengaluru"
+          }
+          EOF
+          python -m jobfinder onboard --answers "$RUNNER_TEMP/ci_answers.json"
+
+      # In CI no AI CLI is installed, so doctor's "ready"/"needs_onboarding"
+      # verdict is always gated off has_cli — assert on what CI CAN honestly
+      # check: every required setup file exists and parses (missing == []).
+      - name: Doctor (setup-file integrity)
+        run: |
+          python -m jobfinder doctor --json | python -c '
+          import json, sys
+          rep = json.load(sys.stdin)
+          missing = rep.get("missing") or []
+          print("doctor missing:", missing or "none (setup files complete)")
+          sys.exit(1 if missing else 0)'
+
+      - name: Discovery smoke (1 real request per keyed channel)
+        env:
+          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+          JSEARCH_API_KEY: ${{ secrets.JSEARCH_API_KEY }}
+        run: python scripts/discovery_smoke.py

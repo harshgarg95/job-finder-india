@@ -1,0 +1,32 @@
+# CI — full test suite on every push and PR. No network, no API keys, no quota
+# spend: the tests stub every provider. Typical run ≈ 1 minute of Actions time.
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch supersedes the running build — don't burn
+# minutes finishing a build nobody will look at.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt pytest
+      - name: Test
+        run: python -m pytest tests/ -q
