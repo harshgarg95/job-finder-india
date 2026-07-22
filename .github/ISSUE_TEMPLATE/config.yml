@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/harshgarg95/job-finder-india/security/advisories/new
+    about: Please report vulnerabilities privately — never in a public issue. See SECURITY.md.
+  - name: Getting-started help
+    url: https://github.com/harshgarg95/job-finder-india/blob/main/GETTING_STARTED.md
+    about: Setup questions are usually answered in the step-by-step guide + its FAQ/Troubleshooting.

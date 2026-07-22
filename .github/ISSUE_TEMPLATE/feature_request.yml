@@ -1,0 +1,42 @@
+name: Feature request
+description: Propose an improvement or a new capability
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A scope note before you write: some things are **out of scope by design**
+        (see "What it does not do" in the README) — auto-apply, stealth scraping /
+        anti-bot bypass, credential handling, and optimistic scoring. Requests to
+        add those will be closed with a pointer to the design rationale.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the situation where the tool falls short — the user story, not the implementation.
+      placeholder: e.g. "When Adzuna returns 0 for my roles, I can't tell whether my target_roles are too narrow or the market is dry."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should happen instead? If it changes scoring behavior, note that prompts/_rubric.md is the scoring law — rubric changes need their own discussion.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      placeholder: Other approaches, and why they're worse (or simpler).
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Which layer does this touch? (best guess is fine)
+      options:
+        - Deterministic Python tools (discover/prescreen/tracker/dashboard/…)
+        - Agent behavior (AGENTS.md / modes/*.md prompt-pack)
+        - Scoring rubric (prompts/_rubric.md — the law; needs discussion)
+        - Docs / onboarding
+        - CI / workflows
+        - Not sure
