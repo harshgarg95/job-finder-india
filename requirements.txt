@@ -2,18 +2,22 @@
 # NOTE: scoring needs NO Python LLM library. Scoring runs in the AI CLI you
 # already have (Claude Code / Gemini / Codex / Qwen / OpenCode / Aider / ...).
 # This app holds no model API key for scoring. (See README "How scoring works".)
+#
+# Versions are PINNED (==) so a dependency can't drift silently under a user or
+# under CI. Dependabot (.github/dependabot.yml) proposes weekly bumps, and the
+# test suite runs on each bump PR — update via those PRs, not by loosening pins.
 
-requests>=2.31        # ATS + Google Jobs + Apify HTTP calls
-PyYAML>=6.0           # profile.yml + ats_tenants.india.yml
+requests==2.34.2      # ATS + Google Jobs + Apify HTTP calls
+PyYAML==6.0.3         # profile.yml + ats_tenants.india.yml
 
 # ── Onboarding (direct-run `python -m jobfinder onboard`) arrow-key menus ────
 # Optional: onboarding falls back to a plain numbered input() menu if absent.
-questionary>=2.0      # arrow-key select for the constrained onboarding fields
+questionary==2.1.1    # arrow-key select for the constrained onboarding fields
 
 # ── Optional resume parsing (only needed if your resume is .docx / .pdf) ────
 # Plain .txt / .md resumes need nothing extra.
-python-docx>=1.1      # .docx resumes
-pdfplumber>=0.11      # .pdf resumes
+python-docx==1.2.0    # .docx resumes
+pdfplumber==0.11.10   # .pdf resumes
 
 # ── Optional: deep-fetch full JDs from JavaScript-rendered career pages ─────
 # Plain-HTML JDs work without this. Install only if you want the deep-fetch to

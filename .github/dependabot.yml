@@ -1,0 +1,22 @@
+# Weekly dependency bumps. requirements.txt is pinned (==), so every update
+# arrives as a PR here — and tests.yml runs the full suite on that PR before
+# it can merge. Updates are grouped per ecosystem: one PR a week, not five.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      python-deps:
+        patterns: ["*"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      actions:
+        patterns: ["*"]
