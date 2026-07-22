@@ -75,6 +75,14 @@ def cmd_discover(argv: list[str]) -> int:
     # FIX 2 — refuse mid-scoring re-discovery (deterministic; the evaluate.md prompt rule
     # didn't hold — Codex re-ran discover 3× during scoring, re-hitting Adzuna each time).
     st = scoring_status()
+    if st.get("unreadable") and "--force" not in argv:
+        # Fail toward "can't verify": an unreadable progress file might mean scoring IS
+        # mid-run — refuse just like the known-in-progress case, and say why.
+        msg = (st["warning"] + " — refusing to re-run discovery (scoring may be mid-run); "
+               "pass --force to override")
+        progress.emit("discover REFUSED — " + msg)
+        print(json.dumps({"error": msg}, ensure_ascii=False))
+        return 1
     if st["target"] and st["remaining"] > 0 and "--force" not in argv:
         msg = (f"scoring in progress ({st['scored']} of {st['target']} scored, {st['remaining']} "
                "remaining) — re-running discovery would churn state and waste quota; pass --force to override")
@@ -87,7 +95,16 @@ def cmd_discover(argv: list[str]) -> int:
     titles = (profile.get("target_roles", {}) or {}).get("primary", []) or ["jobs"]
     raw, reports = discover(Query(titles=titles, location="India", limit_per_channel=limit), cfg)
     jobs = dedupe(raw)
-    cand = keyword_prefilter([j for j in jobs if location_ok(j, profile)], profile, titles)
+    pool = [j for j in jobs if location_ok(j, profile)]
+    cand = keyword_prefilter(pool, profile, titles)
+    # A miswritten profile (odd target_roles → odd keywords) can zero the funnel HERE
+    # while every channel reports ok — which then reads as an honest "0 candidates".
+    # Say which stage cut it, loudly.
+    prefilter_note = None
+    if pool and not cand:
+        prefilter_note = (f"all {len(pool)} raw jobs failed the keyword prefilter — "
+                          "check target_roles / profile keywords (config/profile.yml)")
+        progress.emit("⚠️ " + prefilter_note)
     path = os.path.join(RESULTS, "candidates.jsonl")
     with open(path, "w", encoding="utf-8") as f:
         for j in cand:
@@ -113,7 +130,7 @@ def cmd_discover(argv: list[str]) -> int:
     channels = [{"id": r.id, "enabled": r.enabled, "count": r.count,
                  "status": ch[r.id]["status"], "reason": ch[r.id]["reason"],
                  "errors": ch[r.id]["errors"]} for r in reports]
-    print(json.dumps({
+    out = {
         "discovery_status": {"failed": health["failed"], "reason": health["reason"],
                              "message": health["message"], "ats_errored": health["ats_errored"]},
         "raw": sum(r.count for r in reports if r.enabled),
@@ -123,7 +140,10 @@ def cmd_discover(argv: list[str]) -> int:
         "apify": cfg["apify_resolved"]["state"],
         "quota_remaining": _quota_summary(run_cfg),
         "candidates_path": path,
-    }, ensure_ascii=False, indent=2))
+    }
+    if prefilter_note:
+        out["prefilter_note"] = prefilter_note
+    print(json.dumps(out, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -249,7 +269,13 @@ def cmd_enrich(argv: list[str]) -> int:
     if job is None:
         print(json.dumps({"error": f"job_id {a.job_id} not in prescreened.jsonl"}))
         return 1
-    job_fetcher.enrich(job)                              # deep-fetch full JD (no-op if already full)
+    enriched = job_fetcher.enrich(job)                   # deep-fetch full JD (no-op if already full)
+    # Deterministic JD provenance — the deep-fetch can fail (bot-blocked host, dead
+    # page) and silently leave the discovery snippet in place. A snippet >= the 200-char
+    # verifiability floor would otherwise be scored as if it were the full JD; flag it
+    # so the rubric's incomplete-JD safety net fires on a FLAG, not on model judgment.
+    jd_chars = len(job.description or "")
+    jd_source = "full" if (enriched or jd_chars >= job_fetcher.FULL_JD_MIN) else "snippet"
     from . import verify, location
     vstatus, vreason = verify.classify(job.url, job.description)   # can we actually score this?
     lstatus, lreason, lcity = location.regate(job, profile)       # coarse-location onsite re-gate
@@ -258,11 +284,15 @@ def cmd_enrich(argv: list[str]) -> int:
         "url": job.url, "location": job.location, "source": job.source,
         "verifiability": {"status": vstatus, "reason": vreason},
         "location_gate": {"status": lstatus, "reason": lreason, "derived_city": lcity},
+        "enriched": enriched, "jd_chars": jd_chars, "jd_source": jd_source,
         "scoring_view": job.scoring_view(),             # the exact JD block to score against
         "RULE": ("Score this job ONLY if verifiability.status == 'ok' AND location_gate.status == 'ok'. "
                  "If EITHER is not 'ok' (no_jd / non_job_link / onsite_elsewhere / location_unverified), "
                  "DO NOT score — write an unverifiable record (reason = the failing check's reason) and "
-                 "`tracker --add` it (see modes/evaluate.md). NEVER fabricate a verdict."),
+                 "`tracker --add` it (see modes/evaluate.md). NEVER fabricate a verdict. "
+                 "If jd_source == 'snippet', the full JD could NOT be fetched — score from the snippet "
+                 "but treat it as incomplete evidence: the rubric's incomplete-JD safety net applies "
+                 "(no APPLY; cap at STRETCH and say in the headline the full JD was unavailable)."),
     }, ensure_ascii=False, indent=2))
     return 0
 
@@ -311,8 +341,14 @@ def scoring_status() -> dict:
             d = json.load(open(sp, encoding="utf-8"))
             ids = list(d.get("ids", []))
             target = int(d.get("target", len(ids)))
-        except Exception:  # noqa: BLE001
-            ids, target = [], 0
+        except Exception:  # noqa: BLE001 — corrupt/half-written progress file: the guard
+            # must fail toward "can't verify", NEVER toward "nothing in progress" —
+            # {target:0, remaining:0} would silently disable the partial-run protection.
+            return {"target": None, "scored": None, "remaining": None, "remaining_ids": [],
+                    "complete": False, "unreadable": True,
+                    "warning": ("⚠️ scoring-progress file unreadable — completeness cannot be "
+                                "verified (data/results/score_these.json is corrupt; re-run "
+                                "`prescreen` to regenerate it)")}
     done = set()
     scored_path = os.path.join(RESULTS, "scored.jsonl")
     if os.path.exists(scored_path):
@@ -334,14 +370,17 @@ def _stamp_incomplete_banner(status: dict) -> None:
     """Prepend an honest 'Scored N of M — incomplete' banner to top.md when the run
     is partial. Regenerated on every add (gone at N==M; stays if the agent stops).
     Writes the file directly — score.py's renderer is untouched."""
-    if not status.get("target") or status.get("complete"):
+    if status.get("unreadable"):
+        banner = f"> **{status['warning']}**"            # loud, distinct: can't-verify ≠ complete
+    elif not status.get("target") or status.get("complete"):
         return
+    else:
+        banner = (f"> **⚠️ Scored {status['scored']} of {status['target']} — this run is incomplete "
+                  "(a smaller/limited model may have stopped early). Re-run to score the remaining "
+                  f"{status['remaining']}.**")
     tpath = os.path.join(RESULTS, "top.md")
     if not os.path.exists(tpath):
         return
-    banner = (f"> **⚠️ Scored {status['scored']} of {status['target']} — this run is incomplete "
-              "(a smaller/limited model may have stopped early). Re-run to score the remaining "
-              f"{status['remaining']}.**")
     lines = open(tpath, encoding="utf-8").read().split("\n")
     at = next((i + 1 for i, ln in enumerate(lines) if ln.startswith("# ")), 0)
     lines[at:at] = ["", banner, ""]                     # right under the H1 title
@@ -425,6 +464,8 @@ def cmd_tracker(argv: list[str]) -> int:
            "tracked": len([r for r in rows if not r.get("unverifiable")]),
            "scored_of_target": (f"{status['scored']}/{status['target']}" if status["target"] else "n/a"),
            "remaining": status["remaining"], "complete": status["complete"]}
+    if status.get("unreadable"):                        # surfaced, never silently "n/a"
+        out["scoring_warning"] = status["warning"]
     if len(added) == 1:                                 # back-compat single-verdict fields
         v = added[0]
         out.update({"verdict": v.get("verdict"), "fit_score": v.get("fit_score"),

@@ -275,6 +275,103 @@ def test_discover_refuses_mid_scoring_allows_force():
     print("✓ discover refuses mid-scoring (remaining>0); --force bypasses the guard")
 
 
+def test_scoring_status_unreadable_fails_toward_cant_verify():
+    d = _isolate()
+    open(os.path.join(d, "score_these.json"), "w").write("{corrupt")
+    st = AT.scoring_status()
+    assert st["unreadable"] is True and st["complete"] is False
+    assert st["target"] is None and st["remaining"] is None                 # never {target:0, remaining:0}
+    assert "cannot be verified" in st["warning"]
+    # tracker --status carries the state + warning
+    rc, out = _run(AT.cmd_tracker, ["--status"])
+    rep = json.loads(out)
+    assert rc == 0 and rep["unreadable"] is True and "cannot be verified" in rep["warning"]
+    # top.md gets the loud unreadable banner (not the N-of-M one, not silence)
+    open(os.path.join(d, "top.md"), "w").write("# Top matches\n\nbody\n")
+    AT._stamp_incomplete_banner(st)
+    top = open(os.path.join(d, "top.md")).read()
+    assert "unreadable" in top and "cannot be verified" in top
+    # regression: a MISSING file is still the honest "nothing in progress" state
+    os.remove(os.path.join(d, "score_these.json"))
+    st2 = AT.scoring_status()
+    assert st2["target"] == 0 and "unreadable" not in st2
+    print("✓ corrupt score_these.json → unreadable state, loud banner; missing file unchanged")
+
+
+def test_discover_refuses_on_unreadable_progress_file():
+    d = _isolate()
+    from jobfinder import state
+    state.STATE_DIR = os.path.join(d, ".state")
+    open(os.path.join(d, "score_these.json"), "w").write("NOT JSON")
+    rc, out = _run(AT.cmd_discover, [])                 # guard fires before any network
+    err = json.loads(out.strip().splitlines()[-1])["error"]
+    assert rc == 1 and "unreadable" in err and "--force" in err
+    print("✓ discover refuses on an unreadable progress file (fails toward can't-verify)")
+
+
+def test_discover_prefilter_note_when_keywords_zero_the_funnel():
+    d = _isolate()
+    from jobfinder import state
+    state.STATE_DIR = os.path.join(d, ".state")
+    from jobfinder.discovery import registry
+
+    class Acct:                                          # obvious non-matches for ANY keyword set
+        id = "ats"
+        gap_fill_after = None
+        last_errors: list = []
+
+        def enabled(self, cfg):
+            return True
+
+        def fetch(self, q, cfg):
+            return [JobPosting(title=f"Chartered Accountant {i}", company="C", source="ats:greenhouse",
+                               location="Chennai, India", url=f"https://x/{i}",
+                               description="Taxation, audit and statutory compliance.")
+                    for i in range(3)]
+
+    profile = {"target_roles": {"primary": []}, "function": {"in_scope": []},
+               "location": {"willing_to_relocate": False, "base_city": "Chennai"}}
+    saved_load, saved_bp = AT._load, registry.build_providers
+    AT._load = lambda: (profile, {}, {}, {"profile": profile, "run": {}, "sources": {}, "tenants": []})
+    registry.build_providers = lambda cfg: [Acct()]
+    try:
+        rc, out = _run(AT.cmd_discover, [])
+    finally:
+        AT._load, registry.build_providers = saved_load, saved_bp
+    rep = json.loads(out)
+    assert rc == 0 and rep["raw"] == 3 and rep["candidates"] == 0
+    assert "all 3 raw jobs failed the keyword prefilter" in rep["prefilter_note"]
+    assert "target_roles" in rep["prefilter_note"]       # points at the likely cause
+    print("✓ keyword prefilter zeroing the funnel surfaces prefilter_note — not an honest-looking 0")
+
+
+def test_enrich_reports_jd_provenance_deterministically():
+    d = _isolate()
+    j = JobPosting(title="AI Program Manager", company="C", source="ats:greenhouse",
+                   location="Hyderabad, India", url="https://x/jobs/1",
+                   description="A short snippet. " * 20)             # ~340 chars — over the 200 floor
+    open(os.path.join(d, "prescreened.jsonl"), "w").write(json.dumps(j.to_dict()) + "\n")
+    from jobfinder.discovery import job_fetcher
+    saved = job_fetcher.enrich
+    job_fetcher.enrich = lambda job, min_len=job_fetcher.FULL_JD_MIN: False   # deep-fetch FAILED
+    try:
+        rc, out = _run(AT.cmd_enrich, [j.id])
+    finally:
+        job_fetcher.enrich = saved
+    rep = json.loads(out)
+    assert rc == 0 and rep["enriched"] is False and rep["jd_source"] == "snippet"
+    assert rep["jd_chars"] == len(j.description)
+    assert "snippet" in rep["RULE"]                      # the deterministic instruction rides along
+    # an already-full JD reports "full" via the real enrich() (no fetch, no network)
+    j2 = JobPosting(title="AI PM 2", company="C", source="ats:greenhouse",
+                    location="Hyderabad, India", url="https://x/jobs/2", description="x" * 5000)
+    open(os.path.join(d, "prescreened.jsonl"), "w").write(json.dumps(j2.to_dict()) + "\n")
+    rc2, out2 = _run(AT.cmd_enrich, [j2.id])
+    rep2 = json.loads(out2)
+    assert rc2 == 0 and rep2["jd_source"] == "full" and rep2["enriched"] is False
+    print("✓ enrich reports enriched/jd_chars/jd_source — snippet-scored verdicts are flaggable")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

@@ -11,6 +11,7 @@ State lives in data/.state/quota_<channel>.json = {"month": "YYYY-MM", "count": 
 
 from __future__ import annotations
 
+import sys
 from datetime import date
 
 from .. import state
@@ -28,7 +29,17 @@ def _key(channel: str) -> str:
 
 
 def used_this_month(channel: str) -> int:
-    st = state.read(_key(channel))
+    st, status = state.read_status(_key(channel))
+    if status == "corrupt":
+        # FAIL SAFE: an unreadable counter must never read as "0 used" — that would
+        # silently overspend the whole free tier. Treat the month as exhausted and
+        # say so loudly; the user can delete the file (or wait for a fresh write)
+        # to reset. Direction of failure: don't spend.
+        print(f"⚠️ quota counter for '{channel}' is unreadable "
+              f"(data/.state/quota_{channel}.json is corrupt) — failing safe: treating this "
+              "month's free tier as exhausted. Delete that file to reset the counter.",
+              file=sys.stderr)
+        return 10**9                                     # >= any real cap → exhausted() is True
     return int(st.get("count", 0)) if st.get("month") == _month() else 0
 
 

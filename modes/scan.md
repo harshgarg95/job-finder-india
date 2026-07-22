@@ -10,6 +10,9 @@ or to sanity-check channel/credit state. This mode never scores.
      `discovery_status.message` verbatim and **STOP** — do NOT say "0 candidates" or point at
      `data/results/top.md` (it's from an earlier run, not this one). Usual cause: no network access
      (Codex's sandbox blocks network by default — see README). Only continue when it's `false`.
+   - If the output carries a **`prefilter_note`** ("all N raw jobs failed the keyword prefilter…"),
+     relay it verbatim — that 0 candidates is a profile/keyword mismatch, NOT "no jobs exist";
+     point the user at `target_roles` in `config/profile.yml`.
    - the funnel `raw → candidates`, the per-channel `status` (ok/errored/skipped), `candidates_by_source`,
      and `quota_remaining` (remaining monthly free-tier requests per channel).
    - Channel priority: `ats` = always-on floor; `adzuna` = co-primary India-native;

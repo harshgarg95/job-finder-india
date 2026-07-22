@@ -33,6 +33,9 @@ host model) in this session. No headless model call.
    updated — any file there is from an earlier run, not this one). The usual cause is no network
    access (e.g. Codex's sandbox blocks network by default — see the README). Only when
    `discovery_status.failed` is `false` do you continue.
+   If the output carries a **`prefilter_note`** ("all N raw jobs failed the keyword prefilter…"),
+   relay it verbatim — that 0 is a profile/keyword mismatch cut at the keyword stage, NOT "no jobs
+   exist"; suggest the user check `target_roles` before re-running.
    Then report the funnel, per-channel `status` (ok/errored/skipped), `candidates_by_source`, and
    `quota_remaining` (monthly free-tier left per channel). Adzuna is the co-primary India-native
    channel; JSearch fills in only when Adzuna is thin (a `skipped: adzuna sufficient` is the
@@ -70,7 +73,11 @@ host model) in this session. No headless model call.
       ```
       Then **backfill the slot**: take the next job from `backfill_pool` and score it, so you
       still reach `full_score_top_n` real verdicts (a couldn't-verify job never costs you a slot).
-   3. **If both are `"ok"`:** take `scoring_view` (the full JD) from the enrich output. **YOU**
+   3. **If both are `"ok"`:** take `scoring_view` (the full JD) from the enrich output. **Check
+      `jd_source` first** — if it is `"snippet"`, the full JD could not be fetched (bot-blocked
+      host or dead page) and you are scoring incomplete evidence: the rubric's incomplete-JD
+      safety net applies **deterministically** — do NOT output APPLY, cap at STRETCH, and say in
+      the headline that the full JD was unavailable. (`"full"` scores normally.) **YOU**
       apply `prompts/_rubric.md` against `resume.md` + `config/profile.yml` — cite the exact
       résumé line ↔ exact JD requirement for every dimension, keep legitimacy separate, default
       low, re-score a borderline (≈3.5–4.2) once and keep the lower. **Write the JSON verdict
@@ -118,6 +125,9 @@ host model) in this session. No headless model call.
    `remaining > 0`. Do NOT claim to have scored jobs you have not written verdicts for** — narrating
    "scoring 12/15" while `scored` is 3 is a lie. If you stop anyway, `top.md` carries a
    "⚠️ Scored N of M — incomplete" banner and the dashboard shows it: never present a partial run as complete.
+   If `--status` reports **`unreadable: true`** the progress file is corrupt — completeness CANNOT
+   be verified: relay its `warning` verbatim, do NOT present the run as complete, and re-run
+   `prescreen` to regenerate the progress file before continuing.
 6. **Present.** Show `data/results/top.md`. It now has four parts: **✅ APPLY / STRETCH**
    (full detail + citations) · **⚠️ Couldn't verify — check manually** (unreadable / non-job
    links, with reason) · **Filtered out — and why** (DON'T APPLY) · **Prescreen-filtered —

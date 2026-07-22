@@ -238,6 +238,25 @@ def test_gapfill_runs_jsearch_when_adzuna_thin():
     print("✓ gap-fill: Adzuna < trigger → JSearch runs (fills the gap)")
 
 
+def test_corrupt_counter_fails_safe_toward_at_cap():
+    import io
+    from contextlib import redirect_stderr
+    _isolate_state()
+    os.makedirs(state.STATE_DIR, exist_ok=True)
+    open(os.path.join(state.STATE_DIR, "quota_adzuna.json"), "w").write("{half-written")
+    buf = io.StringIO()
+    with redirect_stderr(buf):
+        used = quota.used_this_month("adzuna")
+        assert quota.exhausted("adzuna", 250) is True    # NEVER reads as used:0 → overspend
+        assert quota.remaining("adzuna", 250) == 0
+    assert used >= 250 and "failing safe" in buf.getvalue()
+    # a fresh, valid write resets the channel (the documented recovery path)
+    quota.record("adzuna", 1)
+    with redirect_stderr(io.StringIO()):
+        assert quota.used_this_month("adzuna") == 1
+    print("✓ corrupt quota counter → at-cap + loud stderr, never a silent used:0")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

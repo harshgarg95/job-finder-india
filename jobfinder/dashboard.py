@@ -98,8 +98,11 @@ def _scoring(done_ids: set) -> dict:
         return {"target": 0, "scored": 0, "remaining": 0, "complete": True}
     try:
         d = json.load(open(sp, encoding="utf-8"))
-    except Exception:  # noqa: BLE001
-        return {"target": 0, "scored": 0, "remaining": 0, "complete": True}
+    except Exception:  # noqa: BLE001 — corrupt progress file: fail toward "can't verify",
+        # never {"complete": True} (that silently disables the incomplete-run banner)
+        return {"target": 0, "scored": 0, "remaining": 0, "complete": False, "unreadable": True,
+                "warning": ("⚠️ scoring-progress file unreadable — completeness cannot be "
+                            "verified (data/results/score_these.json is corrupt)")}
     ids = list(d.get("ids", []))
     target = int(d.get("target", len(ids)))
     rem = [i for i in ids if i not in done_ids]
@@ -194,6 +197,7 @@ PAGE = r"""<!doctype html><html lang=en><head><meta charset=utf-8>
  .skills{font-size:12px;color:var(--mut);margin:8px 0 2px}
  a.link{color:var(--blue);text-decoration:none;font-size:12.5px;display:inline-block;margin:6px 0 2px}
  a.link:hover{text-decoration:underline}
+ .rawurl{color:var(--mut);font-size:12px;display:inline-block;margin:6px 0 2px;word-break:break-all}
  .acts,.reasons{display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin-top:12px}
  .acts{border-top:1px solid var(--line);padding-top:12px}
  .reasons{margin-top:8px}
@@ -224,6 +228,11 @@ const REASONS=[["wrong_level","Too senior"],["wrong_function","Wrong function"],
  ["wrong_location","Location"],["wrong_comp","Comp too low"],
  ["wrong_company","Company"],["wouldnt_apply","Other"]];
 const esc=s=>(s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+// Job URLs are UNTRUSTED (they come from postings). Render a clickable link ONLY
+// for http/https; anything else (javascript:, data:, …) shows as plain text.
+const jdLink=(u,txt)=>{u=(u||"").trim();
+ if(/^https?:\/\//i.test(u)) return `<a class=link href="${esc(u)}" target=_blank rel=noopener>${txt} ↗</a>`;
+ return u?`<span class=rawurl title="link withheld — not an http/https URL">${esc(u)}</span>`:"";};
 const vkey=v=>(v||"").startsWith("DON")?"dont":v==="APPLY"?"apply":"stretch";
 const vlabel=v=>(v||"").startsWith("DON")?"DON'T APPLY":v;
 
@@ -261,7 +270,8 @@ function updateHead(d){
    `<span class="pill p-dont">${d.jobs.filter(j=>vkey(j.verdict)==="dont").length} filtered out</span>`+
    (d.couldnt_verify.length?`<span class="pill p-cv">${d.couldnt_verify.length} couldn't verify</span>`:"")+
    ((d.malformed&&d.malformed.length)?`<span class="pill p-malf">${d.malformed.length} malformed</span>`:"")+
-   ((d.scoring&&d.scoring.target&&!d.scoring.complete)?`<span class="pill p-inc">⚠ ${d.scoring.scored}/${d.scoring.target} scored</span>`:"")+
+   ((d.scoring&&d.scoring.unreadable)?`<span class="pill p-inc">⚠ progress unreadable</span>`:
+    (d.scoring&&d.scoring.target&&!d.scoring.complete)?`<span class="pill p-inc">⚠ ${d.scoring.scored}/${d.scoring.target} scored</span>`:"")+
    `<span>${fbn} call${fbn==1?"":"s"} saved</span>`;
  const f=d.funnel||{}, q=d.quota||{}, parts=[];
  if(f.candidates!=null) parts.push(`<span>Funnel: <b>${f.candidates}</b> candidates → <b>${f.prescreened}</b> prescreened → <b>${f.scored}</b> scored</span>`);
@@ -270,7 +280,16 @@ function updateHead(d){
  if(qseg) parts.push(`<span>Free-tier left: ${qseg}</span>`);
  document.getElementById("funnel").innerHTML=parts.join("");
 }
-async function post(url,j){return (await fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(j)})).json();}
+async function post(url,j){
+ // Never report success we didn't get: surface HTTP errors, ok:false bodies, and
+ // network failures as {ok:false,error} so callers can render the failure.
+ try{
+   const r=await fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(j)});
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok||d.ok===false) return {ok:false,error:(d&&d.error)||("HTTP "+r.status)};
+   return d;
+ }catch(e){return {ok:false,error:String(e)};}
+}
 
 function mkbtn(cls,txt,fn){const b=document.createElement("button");b.className=cls;b.textContent=txt;b.addEventListener("click",fn);return b;}
 function mountActions(card,j){
@@ -288,15 +307,32 @@ function mountActions(card,j){
  acts.append(applied,interested,notsuit); host.append(acts);
 }
 async function save(card,j,action){
- await post("/api/feedback",{job_id:j.job_id,company:j.company,title:j.title,url:j.url,action});
+ const res=await post("/api/feedback",{job_id:j.job_id,company:j.company,title:j.title,url:j.url,action});
  const host=card.querySelector(".actionhost");
+ if(!res||res.ok===false){
+   // FAILED save must LOOK failed: red error + the buttons back. Never "✓ tracked".
+   mountActions(card,j);
+   const err=document.createElement("div"); err.className="saved neg";
+   err.textContent=`✗ couldn't save — ${(res&&res.error)||"unknown error"}`;
+   host.prepend(err);
+   return;
+ }
  const positive=action==="applied"||action==="interested";
  const txt=action==="applied"?"tracked as applied — won't be re-recommended"
    :action==="interested"?"marked interested — stays visible, tilts future scoring"
    :action==="wouldnt_apply"?"passed — won't be re-recommended"
    :`not suitable (${action.replace("wrong_","wrong ")}) — will retune scoring`;
  host.innerHTML=`<div class="saved ${positive?'':'neg'}">✓ ${txt}<span class=change>change</span></div>`;
- host.querySelector(".change").addEventListener("click",async()=>{await post("/api/undo",{job_id:j.job_id});mountActions(card,j);refreshHead();});
+ host.querySelector(".change").addEventListener("click",async()=>{
+   const u=await post("/api/undo",{job_id:j.job_id});
+   if(!u||u.ok===false){   // undo failed → the mark still stands; say so, keep the saved state
+     const s=host.querySelector(".saved");
+     if(s&&!s.querySelector(".undoerr")){const n=document.createElement("span");n.className="undoerr";
+       n.style.color="var(--miss)";n.textContent=` — ✗ couldn't undo: ${(u&&u.error)||"unknown error"}`;s.append(n);}
+     return;
+   }
+   mountActions(card,j);refreshHead();
+ });
  refreshHead();
 }
 async function refreshHead(){updateHead(await (await fetch("/api/data")).json());}
@@ -316,7 +352,7 @@ function makeCard(j){
       </div>
     </div>
     ${cap}${whyBullets(j.headline)}${qualsBlock(j)}${skillsLine(j)}
-    ${j.url?`<a class=link href="${esc(j.url)}" target=_blank rel=noopener>open verified JD ↗</a>`:""}
+    ${jdLink(j.url,"open verified JD")}
     <div class=actionhost></div>`;
  mountActions(el,j);
  return el;
@@ -333,7 +369,7 @@ function makeCVCard(j){
         <div class=cvreason>${esc(j.reason||"the tool couldn't read a real JD at this link")}</div>
       </div>
     </div>
-    ${j.url?`<a class=link href="${esc(j.url)}" target=_blank rel=noopener>open link ↗</a>`:""}
+    ${jdLink(j.url,"open link")}
     <div class=actionhost></div>`;
  mountActions(el,j);
  return el;
@@ -353,13 +389,13 @@ function makeMalfCard(j){
         <div class=malfmeta>${[wv,ws].filter(Boolean).join(" · ")}</div>
       </div>
     </div>
-    ${j.url?`<a class=link href="${esc(j.url)}" target=_blank rel=noopener>open link ↗</a>`:""}`;
+    ${jdLink(j.url,"open link")}`;
  return el;
 }
 function pfTable(rows){
  return `<table class=pf><thead><tr><th>#</th><th>Title</th><th>Company</th><th>Location</th><th></th></tr></thead><tbody>`+
    rows.map(j=>`<tr><td>${j.rank}</td><td>${esc(j.title)}</td><td>${esc(j.company)}</td><td>${esc(j.location||"—")}</td>`+
-     `<td>${j.url?`<a class=link href="${esc(j.url)}" target=_blank rel=noopener>open ↗</a>`:""}</td></tr>`).join("")+
+     `<td>${jdLink(j.url,"open")}</td></tr>`).join("")+
    `</tbody></table><div class=hint style="margin-top:6px">Passed the deterministic prescreen `+
    `(title-family · seniority · function · location) but ranked below the full-score cutoff — not individually scored.</div>`;
 }
@@ -368,9 +404,15 @@ async function load(){
  const L=document.getElementById("list"), H=document.getElementById("hidden");
  L.innerHTML=""; H.innerHTML="";
  const nMalf=(d.malformed&&d.malformed.length)||0;
+ const unreadable=!!(d.scoring&&d.scoring.unreadable);
  const incomplete=!!(d.scoring&&d.scoring.target&&!d.scoring.complete);
- if(!d.jobs.length && !d.couldnt_verify.length && !d.prescreen_filtered.length && !nMalf && !incomplete){
+ if(!d.jobs.length && !d.couldnt_verify.length && !d.prescreen_filtered.length && !nMalf && !incomplete && !unreadable){
    L.innerHTML="<div class=empty>No scored results yet. Say <b>find me jobs</b> in your CLI to run discovery + scoring, then refresh.</div>";return;}
+ if(unreadable){   // fail toward "can't verify" — never render a maybe-partial run as complete
+   const b=document.createElement("div"); b.className="incbanner";
+   b.textContent=d.scoring.warning||"⚠️ scoring-progress file unreadable — completeness cannot be verified";
+   L.appendChild(b);
+ }
  if(incomplete){   // FIRST + LOUD — a partial run must never look complete in the browser
    const b=document.createElement("div"); b.className="incbanner";
    b.textContent=`⚠️ Scored ${d.scoring.scored} of ${d.scoring.target} — this run is incomplete (a smaller/limited model may have stopped early). Re-run to score the remaining ${d.scoring.remaining}.`;

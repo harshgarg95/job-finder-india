@@ -21,6 +21,10 @@ from .link_resolver import UA, host_of
 TIMEOUT = 15
 # Hosts that block bots / need login → can't deep-fetch; keep the snippet.
 UNFETCHABLE = ("linkedin.com", "naukri.com", "glassdoor.")
+# A description at/above this length counts as a full JD; below it is snippet
+# territory (generous — Google Jobs snippets run 1.5–4k chars yet omit the
+# requirements section). Shared with cmd_enrich's jd_source flag.
+FULL_JD_MIN = 4000
 
 
 def _clean(html: str) -> str:
@@ -83,11 +87,11 @@ def fetch_full_jd(url: str) -> str | None:
     return text[:12000] if text and len(text) >= 600 else None
 
 
-def enrich(job, min_len: int = 4000) -> bool:
+def enrich(job, min_len: int = FULL_JD_MIN) -> bool:
     """If a job's description looks like a snippet (shorter than a full JD) and
     its link is fetchable, replace it with the full JD. Returns True if enriched.
-    Threshold is generous (4000) because Google Jobs snippets routinely run
-    1.5–4k chars yet omit the requirements section."""
+    Threshold is generous (FULL_JD_MIN) because Google Jobs snippets routinely
+    run 1.5–4k chars yet omit the requirements section."""
     if len((job.description or "")) >= min_len:
         return False
     full = fetch_full_jd(job.url)

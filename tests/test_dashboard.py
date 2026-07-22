@@ -132,6 +132,56 @@ def test_dashboard_serves_http():
     print("✓ dashboard serves /api/data (JSON) + / (HTML) on 127.0.0.1, then shuts down")
 
 
+def test_dashboard_scoring_unreadable_fails_toward_cant_verify():
+    d = tempfile.mkdtemp(prefix="jf-dash-unread-")
+    D.RESULTS_DIR = d
+    open(os.path.join(d, "score_these.json"), "w").write("{broken")
+    s = D._scoring(set())
+    assert s["unreadable"] is True and s["complete"] is False        # never {"complete": True}
+    assert "cannot be verified" in s["warning"]
+    # regression: a MISSING file stays the benign no-run state
+    os.remove(os.path.join(d, "score_these.json"))
+    assert D._scoring(set())["complete"] is True
+    # and the page renders the state: pill + its own banner branch
+    assert "progress unreadable" in D.PAGE and "d.scoring.unreadable" in D.PAGE
+    print("✓ corrupt score_these.json → 'unreadable' in the browser, never complete:true")
+
+
+def test_dashboard_save_failure_is_loud_and_urls_are_scheme_guarded():
+    # #1 — save()/undo must check the POST result: never "✓ tracked" on a failed save
+    assert "couldn't save" in D.PAGE and "res.ok===false" in D.PAGE   # failure branch exists
+    assert "couldn't undo" in D.PAGE                                  # undo failure surfaced too
+    assert "!r.ok||d.ok===false" in D.PAGE                            # post() surfaces HTTP + body errors
+    # URL-scheme guard — job links render ONLY via jdLink (http/https), else plain text
+    assert "jdLink" in D.PAGE and "/^https?:\\/\\//i" in D.PAGE
+    assert D.PAGE.count('href="${esc(') == 1                          # the ONE inside jdLink — no raw builds left
+    print("✓ failed saves render red + buttons restored; job links are http/https-only")
+
+
+def test_dashboard_post_error_returns_400_ok_false():
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+    D.RESULTS_DIR = tempfile.mkdtemp(prefix="jf-dash-err-")
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), D.Handler)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/feedback",
+                                     data=b"NOT JSON", headers={"Content-Type": "application/json"})
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            raise AssertionError("expected HTTP 400 for a malformed save")
+        except urllib.error.HTTPError as e:
+            body = json.loads(e.read())
+            assert e.code == 400 and body["ok"] is False and body.get("error")
+    finally:
+        srv.shutdown()
+        srv.server_close()
+    print("✓ a failed save returns 400 {ok:false} — the UI renders it red, never '✓ tracked'")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
