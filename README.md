@@ -2,6 +2,8 @@
 
 **The job-search tool that tells you the truth about fit — it says "don't apply" when it's a no.**
 
+![Demo: one-time setup, then "find me jobs" — discovery, honest in-terminal scoring with DON'T APPLY verdicts and reasons, and the clickable results dashboard](docs/demo.gif)
+
 Most AI matchers are optimists: a 70%-there role becomes "4.7/5, great match, here's how to frame
 your gaps." That wastes your time and the recruiter's. Job Finder India scores each job **0–5**
 against your résumé, treats a gap in seniority or function as a **disqualifier**, and cites the exact
@@ -48,6 +50,8 @@ Review results in the browser at any time:
 ```bash
 python -m jobfinder dashboard    # local page at http://127.0.0.1:8755 (Ctrl-C to stop)
 ```
+
+![The results dashboard: honest verdict pills (0 APPLY is a real answer), citation-backed reasons per job, and one-click Applied / Interested / Not-suitable feedback](docs/dashboard.png)
 
 ## What it does **not** do
 
