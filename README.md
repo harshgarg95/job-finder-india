@@ -56,9 +56,10 @@ python -m jobfinder dashboard    # local page at http://127.0.0.1:8755 (Ctrl-C t
 ## What it does **not** do
 
 - **No auto-apply, ever.** It recommends; you decide and click Submit. It never applies for you.
-- **No stealth scraping and no bot-block evasion.** Discovery uses public ATS JSON APIs
-  (Greenhouse/Lever/Ashby/Workable/Workday/SmartRecruiters) and official APIs. If a site blocks
-  automation, it is **detected and skipped** — never worked around.
+- **No stealth scraping and no bot-block evasion.** Discovery and JD fetch use free public ATS
+  JSON endpoints — documented APIs for Greenhouse/Lever/Ashby/Workable/SmartRecruiters; for
+  Workday, the same public keyless endpoints its own careers pages use — plus official APIs
+  (Adzuna). If a site blocks automation, it is **detected and skipped** — never worked around.
 - **No credential handling.** It never asks for, stores, or uses your job-board logins. Optional
   discovery keys live in your own `.env` and are sent only to that provider's API.
 - **No invented experience.** A high score must be earned by evidence already in your résumé.
@@ -84,10 +85,11 @@ calls.** Every run prints the funnel (`candidates → prescreened → scored`) a
 - **Your AI login is never touched.** Scoring runs inside the AI CLI you already use, under that
   assistant's own login — this tool never sees, stores, or transmits your model credentials, and
   holds no AI API key of its own.
-- **Job data comes from APIs, not scraping.** Official/free APIs (public ATS JSON, the official
-  Adzuna API) plus optional third-party APIs you enable with your own keys (JSearch, SerpAPI,
-  Apify) that do their own collection under their own terms. Sites that block bots are **detected
-  and skipped** — never scraped around.
+- **Job data comes from APIs, not scraping.** Free public APIs — documented ATS APIs, the
+  official Adzuna API; for Workday, the public keyless endpoints its own careers pages use —
+  plus optional third-party APIs you enable with your own keys (JSearch, SerpAPI, Apify) that do
+  their own collection under their own terms. Sites that block bots are **detected and
+  skipped** — never scraped around.
 - **Your résumé, profile, and results stay on your machine.** `resume.md`, `config/profile.yml`,
   `config/preferences.yml`, `.env`, and everything under `data/` are **gitignored** — never
   committed, never uploaded. The only content that leaves your computer is the job text your own

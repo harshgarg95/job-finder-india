@@ -8,12 +8,15 @@ How your data & credentials are handled
    model credentials, and it holds no AI API key of its own.
 
 2. Job data
-   Job postings come from official and free APIs — the public ATS JSON endpoints
-   (Greenhouse, Lever, Ashby, Workable, Workday, SmartRecruiters) and the official
-   Adzuna API — and, optionally, from third-party APIs you enable with your own keys
-   (JSearch, SerpAPI, Apify). Those providers do their own collection under their own
-   terms. This tool does not scrape websites that block automated access: blocked
-   sites are detected and skipped, never worked around.
+   Job postings come from free, public APIs: the documented ATS APIs (Greenhouse,
+   Lever, Ashby, Workable, SmartRecruiters), the official Adzuna API, and — for
+   Workday — the same public, keyless JSON endpoints its own careers pages use
+   (undocumented but publicly served; accessed at low volume, with an identifying
+   User-Agent, and never around a block). Optionally, third-party APIs you enable
+   with your own keys (JSearch, SerpAPI, Apify) add coverage; those providers do
+   their own collection under their own terms. This tool does not scrape websites
+   that block automated access: blocked sites are detected and skipped, never
+   worked around.
 
 3. Your résumé and profile
    resume.md, config/profile.yml, config/preferences.yml, .env, and everything under
