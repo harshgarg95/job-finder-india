@@ -372,6 +372,22 @@ def test_enrich_reports_jd_provenance_deterministically():
     print("✓ enrich reports enriched/jd_chars/jd_source — snippet-scored verdicts are flaggable")
 
 
+def test_topmd_dashboard_pointer_stamped_once():
+    d = _isolate()
+    v = {"job_id": "dp1", "company": "C", "title": "AI PM", "url": "https://x",
+         "fit_score": 4.1, "verdict": "APPLY", "headline": "ok"}
+    p = os.path.join(d, "v.json"); json.dump(v, open(p, "w"))
+    _run(AT.cmd_tracker, ["--add", p])
+    top = open(os.path.join(d, "top.md")).read()
+    assert top.count("jobfinder dashboard") == 1          # footer pointer stamped
+    v2 = dict(v, job_id="dp2")
+    p2 = os.path.join(d, "v2.json"); json.dump(v2, open(p2, "w"))
+    _run(AT.cmd_tracker, ["--add", p2])                   # top.md regenerated + re-stamped
+    top2 = open(os.path.join(d, "top.md")).read()
+    assert top2.count("jobfinder dashboard") == 1         # exactly once — idempotent
+    print("✓ top.md footer carries the dashboard pointer exactly once per render")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

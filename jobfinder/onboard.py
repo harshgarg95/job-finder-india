@@ -35,6 +35,86 @@ _SEED_PAIRS = [
     ("config/_profile.example.md", "config/_profile.md"),
 ]
 
+# ── Optional discovery keys — guided, prominent, never typed INTO this tool ──
+# The keys unlock the India-native channels (Adzuna + JSearch). Onboarding only
+# GUIDES the user to put their own keys in their own .env — it never prompts for
+# a key value (hard rule: this tool never collects/prints/transmits keys).
+_RECOMMENDED_KEYS = ("ADZUNA_APP_ID", "ADZUNA_APP_KEY", "JSEARCH_API_KEY")
+_ENV_PATH = os.path.join(ROOT, ".env")     # module-level so tests can point elsewhere
+
+
+def _env_file_keys(path: str) -> set[str]:
+    """Names with a non-empty value in a .env file (values are never returned)."""
+    names: set[str] = set()
+    try:
+        for line in open(path, encoding="utf-8"):
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            if v.strip():
+                names.add(k.strip())
+    except OSError:
+        pass
+    return names
+
+
+def _missing_keys() -> list[str]:
+    """Recommended keys with no value in os.environ NOR the .env file. Re-reads
+    .env every call, so a mid-onboarding edit is seen on re-check."""
+    have = _env_file_keys(_ENV_PATH) | {k for k, v in os.environ.items() if v.strip()}
+    return [k for k in _RECOMMENDED_KEYS if k not in have]
+
+
+def _print_keys_howto() -> None:
+    print("""
+How to (once, ~2 min — in your own editor, not here):
+  1. In this folder:  cp .env.example .env      (if .env doesn't exist yet)
+  2. Adzuna — register a free app at https://developer.adzuna.com
+     → copy App ID + App Key into .env as:
+         ADZUNA_APP_ID=...
+         ADZUNA_APP_KEY=...
+  3. JSearch — free tier at https://rapidapi.com (subscribe "JSearch")
+     or https://openwebninja.com → into .env as:
+         JSEARCH_API_KEY=...
+  4. Save .env, come back here.""")
+
+
+def _keys_gate() -> None:
+    """Guided keys step at the start of interactive onboarding. Shown ONLY when a
+    recommended key is missing; requires an explicit choice — never silently
+    proceeds past missing keys, and never asks the user to type a key here."""
+    missing = _missing_keys()
+    if not missing:
+        return
+    present = [k for k in _RECOMMENDED_KEYS if k not in missing]
+    print("── Free API keys — strongly recommended ────────────────────────────────")
+    print("Strongly recommended (free, ~2 min): add your own API keys — they unlock")
+    print("India-native listings (Naukri-style) beyond company career pages. Without")
+    print("them you still get company-ATS jobs, but fewer India-specific ones.")
+    print(f"\n  Missing: {', '.join(missing)}"
+          + (f"   (already set: {', '.join(present)})" if present else ""))
+    print("  • Adzuna  → https://developer.adzuna.com")
+    print("  • JSearch → https://rapidapi.com (\"JSearch\") or https://openwebninja.com")
+    print("  Keys go in the .env file in this folder — never typed into this tool.\n")
+    while True:
+        choice = _select("API keys — what would you like to do?", [
+            "I've added them — re-check .env and confirm",
+            "Show me how — links + steps, then re-check",
+            "Skip — ATS-only (fewer India-native jobs)",
+        ])
+        if choice.startswith("Skip"):
+            print("Skipping keys: discovery runs on the free company-ATS floor only "
+                  "(you can add keys to .env any time — no re-setup needed).")
+            return
+        if choice.startswith("Show me how"):
+            _print_keys_howto()
+        missing = _missing_keys()                    # both non-skip options re-check
+        if not missing:
+            print("✓ found all keys in .env — India-native channels are on.")
+            return
+        print(f"Still missing: {', '.join(missing)} — pick again (or Skip).\n")
+
 
 def seed_config_files(force: bool = False, skip: tuple = ()) -> list[str]:
     """Create any missing live config files from their shipped templates. `skip`
@@ -629,6 +709,7 @@ def _interactive() -> int:
     print("── job-finder onboarding ──  (I'll write resume.md + config/profile.yml for you)\n")
     seed_config_files(skip=("config/profile.yml",))   # config defaults; profile comes from answers
     try:
+        _keys_gate()                                  # guided free-keys step (explicit choice, skippable)
         a = _collect_answers()
         for attempt in range(3):               # retry CAP — a bad résumé can never loop forever
             res = write_from_answers(a, force=True)
@@ -718,6 +799,14 @@ def cmd(argv: list[str]) -> int:
         if not res.get("error") and a.answers and os.path.exists(a.answers):
             os.remove(a.answers)
             res["answers_file"] = "deleted after successful write"
+        # No TTY here, so no keys menu — surface missing optional keys in the
+        # result instead (never silent, never a prompt, never a key value).
+        if not res.get("error"):
+            _mk = _missing_keys()
+            if _mk:
+                res["keys_note"] = (f"optional discovery keys missing ({', '.join(_mk)}) — "
+                                    "discovery runs ATS-only (fewer India-native listings); "
+                                    "see .env.example for the free signup links")
         print(json.dumps(res, ensure_ascii=False))
         return 1 if res.get("error") else 0
     if a.health_check is not None:

@@ -148,7 +148,8 @@ Every verdict comes with a reason tied to your résumé — not a black-box numb
 with the résumé-line reasons" — and further down, the DON'T APPLYs each with their reason.)*
 
 The full report is saved at `data/results/top.md` — open it any time (on macOS:
-`open data/results/top.md`).
+`open data/results/top.md`). **Best viewed in the dashboard (next section):** clickable, with
+Applied / Interested / Not-suitable buttons that make future runs smarter.
 
 ## The dashboard (recommended)
 

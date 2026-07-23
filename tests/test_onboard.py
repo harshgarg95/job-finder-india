@@ -408,6 +408,110 @@ def test_set_target_roles_patches_profile_in_place():
     print("✓ --set patches target_roles/work_mode in place, preserves the rest, refuses unknown keys")
 
 
+def _strip_key_env():
+    """Remove the recommended keys from os.environ; returns a restore map."""
+    return {k: os.environ.pop(k, None) for k in onboard._RECOMMENDED_KEYS}
+
+
+def _restore_key_env(saved):
+    for k, v in saved.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+
+def test_missing_keys_reads_env_file_and_environ():
+    import json  # noqa: F401 — parity with siblings
+    d = _root()
+    saved_path, saved_env = onboard._ENV_PATH, _strip_key_env()
+    try:
+        onboard._ENV_PATH = os.path.join(d, ".env")
+        assert onboard._missing_keys() == list(onboard._RECOMMENDED_KEYS)      # nothing anywhere
+        open(onboard._ENV_PATH, "w").write("ADZUNA_APP_ID=aaa\n# c\nADZUNA_APP_KEY=\n")
+        assert onboard._missing_keys() == ["ADZUNA_APP_KEY", "JSEARCH_API_KEY"]  # empty value ≠ set
+        os.environ["JSEARCH_API_KEY"] = "kkk"                                  # environ counts too
+        assert onboard._missing_keys() == ["ADZUNA_APP_KEY"]
+        open(onboard._ENV_PATH, "a").write("ADZUNA_APP_KEY=bbb\n")             # re-check re-reads the file
+        assert onboard._missing_keys() == []
+    finally:
+        onboard._ENV_PATH = saved_path
+        _restore_key_env(saved_env)
+    print("✓ _missing_keys: .env + environ union; empty values don't count; re-check re-reads")
+
+
+def test_keys_gate_skip_howto_and_silent_when_present():
+    import io
+    from contextlib import redirect_stdout
+    d = _root()
+    saved_path, saved_env, saved_sel = onboard._ENV_PATH, _strip_key_env(), onboard._select
+    try:
+        onboard._ENV_PATH = os.path.join(d, ".env")
+        # Skip path: block shown (exact pitch + links), explicit consequence, proceeds
+        onboard._select = lambda q, choices, default=None: choices[2]
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            onboard._keys_gate()
+        out = buf.getvalue()
+        assert "Strongly recommended" in out and "developer.adzuna.com" in out
+        assert "ATS-only" in out or "company-ATS floor" in out
+        assert "never typed into this tool" in out                    # no key values collected here
+        # Show-me-how path: steps printed, then the re-check FINDS the keys the user added
+        calls = {"n": 0}
+
+        def fake_select(q, choices, default=None):
+            calls["n"] += 1
+            open(onboard._ENV_PATH, "w").write(
+                "ADZUNA_APP_ID=a\nADZUNA_APP_KEY=b\nJSEARCH_API_KEY=c\n")   # "user edits .env"
+            return choices[1]
+
+        onboard._select = fake_select
+        buf2 = io.StringIO()
+        with redirect_stdout(buf2):
+            onboard._keys_gate()
+        out2 = buf2.getvalue()
+        assert calls["n"] == 1 and "rapidapi.com" in out2 and "✓ found all keys" in out2
+        # All present → the gate is silent (nothing to surface)
+        buf3 = io.StringIO()
+        with redirect_stdout(buf3):
+            onboard._keys_gate()
+        assert buf3.getvalue() == ""
+    finally:
+        onboard._ENV_PATH, onboard._select = saved_path, saved_sel
+        _restore_key_env(saved_env)
+    print("✓ keys gate: skip is explicit, how-to re-checks and confirms, silent when keys present")
+
+
+def test_answers_path_surfaces_keys_note():
+    import io
+    import json
+    from contextlib import redirect_stdout
+    d = _root()
+    saved_path, saved_env = onboard._ENV_PATH, _strip_key_env()
+    try:
+        onboard._ENV_PATH = os.path.join(d, ".env")                   # absent → all missing
+        af = os.path.join(d, "answers.json")
+        json.dump(_full_answers(), open(af, "w"))
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = onboard.cmd(["--answers", af])
+        res = json.loads(buf.getvalue().strip().splitlines()[-1])
+        assert rc == 0 and "ATS-only" in res.get("keys_note", "")     # surfaced, non-blocking
+        # keys present → no note
+        open(onboard._ENV_PATH, "w").write("ADZUNA_APP_ID=a\nADZUNA_APP_KEY=b\nJSEARCH_API_KEY=c\n")
+        af2 = os.path.join(d, "answers2.json")
+        json.dump(_full_answers(), open(af2, "w"))
+        buf2 = io.StringIO()
+        with redirect_stdout(buf2):
+            rc2 = onboard.cmd(["--answers", af2, "--force"])
+        res2 = json.loads(buf2.getvalue().strip().splitlines()[-1])
+        assert rc2 == 0 and "keys_note" not in res2
+    finally:
+        onboard._ENV_PATH = saved_path
+        _restore_key_env(saved_env)
+    print("✓ --answers path: keys_note when keys missing, absent when set — never a prompt")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

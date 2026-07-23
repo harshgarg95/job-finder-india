@@ -169,12 +169,19 @@ host model) in this session. No headless model call.
    >   **4.** Check whether a posting is still live (`python -m jobfinder live <job_id>`)
    >   **5.** Done `← (default)`
 
-**Finally, always point the user to the dashboard for review:** tell them to run
-`python -m jobfinder dashboard` — a local page (127.0.0.1, opens automatically, Ctrl-C to stop) that
-renders this run the same honest way (APPLY/STRETCH · Couldn't-verify · Prescreen-filtered, with the
-funnel + quota) and turns one-click **Applied / Interested / Not-suitable(+reason)** into the same
-feedback store prescreen replays. It is **deterministic and model-independent** — the reliable review
-path when the inline marks above get skipped. The agent points to it; the dashboard does the work.
+**Finally, ALWAYS offer the dashboard — after the results, before you finish.** Ask exactly:
+
+> View these in a clickable dashboard (mark Applied/Interested/Not-suitable)? Run:
+> `python -m jobfinder dashboard`
+
+If the user says **yes**: `dashboard` is a **blocking server** (runs until Ctrl-C) — **never run it
+in the foreground; that hangs your session.** Run it as a **background task** if your CLI supports
+backgrounding; otherwise hand the user the command to run in their own terminal (it opens
+http://127.0.0.1:8755 in their browser automatically; Ctrl-C stops it). It renders this run the same
+honest way (APPLY/STRETCH · Couldn't-verify · Prescreen-filtered, with the funnel + quota) and turns
+one-click **Applied / Interested / Not-suitable(+reason)** into the same feedback store prescreen
+replays — **deterministic and model-independent**, the reliable review path when the inline marks
+above get skipped. (top.md's footer carries the same pointer.)
 
 ## NEVER
 - **Run or search for a `score` / `evaluate` subcommand — it does not exist.** YOU write the
