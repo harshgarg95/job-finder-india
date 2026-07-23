@@ -13,6 +13,8 @@ requirements may be incomplete). Never fabricates text; returns None on failure.
 from __future__ import annotations
 
 import re
+import time
+from urllib.parse import urlparse
 
 import requests
 
@@ -25,6 +27,79 @@ UNFETCHABLE = ("linkedin.com", "naukri.com", "glassdoor.")
 # territory (generous — Google Jobs snippets run 1.5–4k chars yet omit the
 # requirements section). Shared with cmd_enrich's jd_source flag.
 FULL_JD_MIN = 4000
+
+# ── ATS-aware JD fetch (Workday CXS detail · SmartRecruiters posting API) ─────
+# Their careers pages are JS SPAs, so the generic HTTP fetch gets nothing — but
+# both serve the JD as public keyless JSON (SmartRecruiters: a documented public
+# API; Workday CXS: the same endpoint its own careers SPA calls). Polite-client
+# rules, non-negotiable: an honest identifying User-Agent (never a spoofed
+# browser), paced sequential requests, ONE attempt — and a 403/429/anti-bot
+# answer is a "no": fall through to honest no_jd, never around a block.
+_API_UA = "job-finder-india/1.0 (+https://github.com/harshgarg95/job-finder-india)"
+_API_HEADERS = {"User-Agent": _API_UA, "Accept": "application/json"}
+_API_MIN_INTERVAL = 1.0                 # seconds between detail fetches — no hammering
+_last_api_call = 0.0
+
+
+class _ApiBlocked(Exception):
+    """The host answered 403/429 — treat as a refusal, not an obstacle."""
+
+
+def _pace() -> None:
+    global _last_api_call
+    wait = _API_MIN_INTERVAL - (time.monotonic() - _last_api_call)
+    if wait > 0:
+        time.sleep(wait)
+    _last_api_call = time.monotonic()
+
+
+def _api_get_json(url: str) -> dict | None:
+    """One polite GET. 403/429 → _ApiBlocked (a 'no'); other non-200 / bad JSON →
+    None (caller falls through to the generic path). Never retries."""
+    _pace()
+    r = requests.get(url, headers=_API_HEADERS, timeout=TIMEOUT)
+    if r.status_code in (403, 429):
+        raise _ApiBlocked(f"HTTP {r.status_code}")
+    if r.status_code != 200:
+        return None
+    try:
+        data = r.json()
+        return data if isinstance(data, dict) else None
+    except ValueError:
+        return None
+
+
+def _fetch_workday_jd(url: str) -> str | None:
+    """JD via Workday's CXS job-detail JSON, derived from the public job URL:
+    https://{host}/{site}/job/{...}  →  https://{host}/wday/cxs/{tenant}/{site}/job/{...}
+    (tenant = host prefix). Verified live 2026-07-23 (Genpact: 4,170-char JD where
+    the rendered page yields nothing over HTTP)."""
+    p = urlparse(url)
+    parts = [s for s in (p.path or "").split("/") if s]
+    if len(parts) < 3 or "job" not in parts:
+        return None
+    tenant, site = p.netloc.split(".")[0], parts[0]
+    data = _api_get_json(f"https://{p.netloc}/wday/cxs/{tenant}/{site}/{'/'.join(parts[1:])}")
+    if not data:
+        return None
+    text = _clean((data.get("jobPostingInfo") or {}).get("jobDescription") or "")
+    return text if len(text) >= 600 else None       # same floor as fetch_full_jd — no thin passes
+
+
+def _fetch_smartrecruiters_jd(url: str) -> str | None:
+    """JD via SmartRecruiters' documented public Posting API:
+    https://api.smartrecruiters.com/v1/companies/{company}/postings/{id}
+    (company + id parsed from the public job URL). Verified live 2026-07-23."""
+    m = re.search(r"smartrecruiters\.com/([^/?#]+)/(\d{6,})", url)
+    if not m:
+        return None
+    data = _api_get_json(f"https://api.smartrecruiters.com/v1/companies/{m.group(1)}/postings/{m.group(2)}")
+    if not data:
+        return None
+    sections = (data.get("jobAd") or {}).get("sections") or {}
+    text = _clean("\n\n".join((v or {}).get("text") or "" for v in sections.values()
+                              if isinstance(v, dict)))
+    return text if len(text) >= 600 else None
 
 
 def _clean(html: str) -> str:
@@ -71,6 +146,21 @@ def fetch_full_jd(url: str) -> str | None:
     h = host_of(url)
     if any(u in h for u in UNFETCHABLE):
         return None
+    # ATS-aware branch first: these hosts serve the JD as public keyless JSON,
+    # while their rendered pages are empty SPAs over plain HTTP.
+    try:
+        if "myworkdayjobs.com" in h:
+            t = _fetch_workday_jd(url)
+            if t:
+                return t[:12000]
+        elif "smartrecruiters.com" in h:
+            t = _fetch_smartrecruiters_jd(url)
+            if t:
+                return t[:12000]
+    except _ApiBlocked:
+        return None          # the host said no — honest no_jd, never around a block
+    except Exception:        # noqa: BLE001 — guarded fallback: today's path unchanged
+        pass
     text = None
     try:
         r = requests.get(url, headers={"User-Agent": UA, "Accept-Language": "en"},
