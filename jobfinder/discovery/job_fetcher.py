@@ -35,7 +35,7 @@ FULL_JD_MIN = 4000
 # rules, non-negotiable: an honest identifying User-Agent (never a spoofed
 # browser), paced sequential requests, ONE attempt — and a 403/429/anti-bot
 # answer is a "no": fall through to honest no_jd, never around a block.
-_API_UA = "job-finder-india/1.0 (+https://github.com/harshgarg95/job-finder-india)"
+_API_UA = UA                    # one canonical honest UA (link_resolver.UA) everywhere
 _API_HEADERS = {"User-Agent": _API_UA, "Accept": "application/json"}
 _API_MIN_INTERVAL = 1.0                 # seconds between detail fetches — no hammering
 _last_api_call = 0.0
@@ -165,11 +165,14 @@ def fetch_full_jd(url: str) -> str | None:
     try:
         r = requests.get(url, headers={"User-Agent": UA, "Accept-Language": "en"},
                          timeout=TIMEOUT, allow_redirects=True)
+        if r.status_code in (403, 429):
+            return None      # the host said no — same contract as the API branches:
+            #                  one attempt, no retry, no browser-render around it
         if r.status_code < 400 and r.text:
             text = _clean(r.text)
     except requests.RequestException:
         text = None
-    # If HTTP got little (JS-rendered page), try a real browser.
+    # If HTTP got little (JS-rendered page, served 200), try a real browser render.
     if not text or len(text) < 800:
         rendered = _fetch_playwright(url)
         if rendered and len(rendered) > len(text or ""):

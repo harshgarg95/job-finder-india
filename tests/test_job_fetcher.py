@@ -111,6 +111,17 @@ def test_dispatch_block_is_a_no_and_failure_falls_through():
         JF.requests = fake
         assert JF.fetch_full_jd(_WD_URL) is None        # page also yields nothing in the stub
         assert len(fake.calls) == 2 and fake.calls[1][0] == _WD_URL      # fell through to the page
+        # the GENERIC path also identifies honestly — no spoofed browser UA anywhere
+        assert fake.calls[1][1]["headers"]["User-Agent"].startswith("job-finder-india/")
+        assert "Mozilla" not in JF.UA                    # the canonical UA is the honest one
+
+        # (d) 403 on the GENERIC page → same contract: one attempt, no playwright render
+        pw_calls = []
+        JF._fetch_playwright = lambda url: pw_calls.append(url)
+        fake = _FakeRequests([("example.com", _Resp(403))])
+        JF.requests = fake
+        assert JF.fetch_full_jd("https://example.com/roles/12345") is None
+        assert len(fake.calls) == 1 and pw_calls == []   # no retry, no browser-render around the block
     finally:
         JF.requests = saved
         JF._fetch_playwright = saved_pw

@@ -28,8 +28,11 @@ from urllib.parse import urlparse
 
 import requests
 
-UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+# Honest identifying UA — the project's polite-client rule: we say who we are on
+# every request (page fetches, liveness checks, and the ATS JSON branches alike).
+# Measured before switching (2026-07-23, n=15 pool URLs, browser-UA vs this):
+# hit-rate delta ZERO — the spoofed browser UA bought nothing.
+UA = "job-finder-india/1.0 (+https://github.com/harshgarg95/job-finder-india)"
 TIMEOUT = 12
 
 # Known ATS / employer-hosting domains → the canonical "company page" tier.
