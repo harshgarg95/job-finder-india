@@ -58,6 +58,36 @@ def test_url_only_recheck_ignores_no_jd():
     print("✓ URL-only re-check (jd_text=None) checks the link, not the JD")
 
 
+def test_query_job_id_counts_as_specific_but_landing_stays_landing():
+    """Both directions of the gh_jid fix — loosen ONLY for whitelisted id params.
+
+    The embed pattern (…/careers/?gh_jid=NNNN) pins one specific Greenhouse
+    posting; it was 100% of URL-level rejects in the 2026-07 census. A landing
+    path with NO id (or only tracking params) must still classify as a landing."""
+    # MUST NOW PASS as specific postings:
+    for u in (
+        "https://www.highradius.com/about/careers-list/?gh_jid=7712901003",
+        "https://stripe.com/jobs/search?gh_jid=7569678",
+        "https://www.mongodb.com/careers/job/?gh_jid=8050418",
+        "https://company.com/careers/?gh_jid=4012345",
+        "https://company.com/openings?job_id=99887",
+    ):
+        st, why = verify.classify(u, None)
+        assert st == "ok", f"{u} → {st} ({why})"
+    # MUST STILL be non-job landings:
+    for u in (
+        "https://openai.com/careers/",
+        "https://company.com/careers",
+        "https://company.com/jobs",
+        "https://company.com/careers/?utm_source=1234567",   # tracking param is NOT a job id
+        "https://company.com/jobs/search?fbclid=9988776655", # ditto — never "any query string"
+        "https://company.com",                               # bare domain unchanged
+    ):
+        st, why = verify.classify(u, None)
+        assert st == "non_job_link", f"{u} → {st} (should stay non_job_link)"
+    print("✓ gh_jid-style query ids count as specific; id-less landings still rejected")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

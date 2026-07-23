@@ -34,6 +34,13 @@ _LANDING_RE = re.compile(
     re.I,
 )
 
+# Embedded-ATS boards pin ONE specific posting via a job-id QUERY param on a
+# landing-looking path (…/careers/?gh_jid=4012345 — the Greenhouse embed pattern;
+# 175/175 URL-level rejects in the 2026-07 census were exactly this). Count ONLY
+# a whitelisted id param with a numeric value — never "any query string": a
+# landing page with utm/fbclid noise must still classify as a landing page.
+_QUERY_ID_RE = re.compile(r"(?:^|&)(?:gh_jid|jid|job_?id|posting|vacancy)=\d{4,}", re.I)
+
 
 def classify(url: str, jd_text: str | None) -> tuple[str, str]:
     """Return (status, human-readable reason).
@@ -52,7 +59,11 @@ def classify(url: str, jd_text: str | None) -> tuple[str, str]:
         return "non_job_link", "no link on the posting"
     parsed = urlparse(u if "://" in u else "https://" + u)
     path = parsed.path or ""
-    has_job_id = bool(link_resolver._distinctive_token(u))   # a job-id token in the path
+    # A job id in the PATH (…/jobs/4012345) or a whitelisted id QUERY param
+    # (…/careers/?gh_jid=4012345). Query check lives HERE, not in
+    # _distinctive_token — that token's redirect-survival semantics back the
+    # liveness check and must stay path-only.
+    has_job_id = bool(link_resolver._distinctive_token(u)) or bool(_QUERY_ID_RE.search(parsed.query or ""))
     bare_domain = path.rstrip("/") == ""
     is_landing = bool(_LANDING_RE.search(path))
     if not has_job_id and (bare_domain or is_landing):
