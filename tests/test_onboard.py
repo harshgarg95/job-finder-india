@@ -131,7 +131,11 @@ def _run_direct(select_map, input_fn, resume="x" * 400):
     """Drive _interactive() with scripted _select/_input + a simulated TTY. Returns rc."""
     saved = (onboard._select, onboard._input, onboard._read_pasted)
     orig_stdin = sys.stdin
-    onboard._select = lambda q, choices, default=None: next(v for k, v in select_map.items() if k in q.lower())
+    # The keys gate asks first when keys are absent (e.g. in CI) — Skip it here;
+    # the gate's own behavior has dedicated tests.
+    onboard._select = lambda q, choices, default=None: (
+        choices[2] if "api keys" in q.lower()
+        else next(v for k, v in select_map.items() if k in q.lower()))
     onboard._input = input_fn
     onboard._read_pasted = lambda: resume
     try:
@@ -170,7 +174,8 @@ def test_retry_cap_on_bad_resume_no_infinite_loop():
         return "too short"                        # < MIN_RESUME_CHARS every time → never usable
 
     onboard._select = lambda q, choices, default=None: (
-        onboard._RESUME_CHOICES[0] if "résumé" in q.lower() else (default or choices[0]))
+        choices[2] if "api keys" in q.lower()                 # Skip the keys gate (own tests exist)
+        else onboard._RESUME_CHOICES[0] if "résumé" in q.lower() else (default or choices[0]))
     onboard._input = lambda p, default="": default
     onboard._read_pasted = paste
     try:
@@ -480,6 +485,33 @@ def test_keys_gate_skip_howto_and_silent_when_present():
         onboard._ENV_PATH, onboard._select = saved_path, saved_sel
         _restore_key_env(saved_env)
     print("✓ keys gate: skip is explicit, how-to re-checks and confirms, silent when keys present")
+
+
+def test_keys_gate_recheck_loop_is_bounded():
+    """Regression for the CI hang: a driver that always answers 're-check' in a
+    keyless environment must terminate at the cap, not spin forever."""
+    import io
+    from contextlib import redirect_stdout
+    d = _root()
+    saved_path, saved_env, saved_sel = onboard._ENV_PATH, _strip_key_env(), onboard._select
+    calls = {"n": 0}
+    try:
+        onboard._ENV_PATH = os.path.join(d, ".env")           # never created → keys never appear
+
+        def always_recheck(q, choices, default=None):
+            calls["n"] += 1
+            return choices[0]                                  # "I've added them — re-check"
+
+        onboard._select = always_recheck
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            onboard._keys_gate()                               # must RETURN, not hang
+        assert calls["n"] == onboard._MAX_KEY_RECHECKS         # bounded exactly at the cap
+        assert "continuing without them" in buf.getvalue()     # honest fail-open line
+    finally:
+        onboard._ENV_PATH, onboard._select = saved_path, saved_sel
+        _restore_key_env(saved_env)
+    print("✓ keys-gate re-check loop is capped — terminates keyless (the CI-hang regression)")
 
 
 def test_answers_path_surfaces_keys_note():

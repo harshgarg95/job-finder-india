@@ -41,6 +41,7 @@ _SEED_PAIRS = [
 # a key value (hard rule: this tool never collects/prints/transmits keys).
 _RECOMMENDED_KEYS = ("ADZUNA_APP_ID", "ADZUNA_APP_KEY", "JSEARCH_API_KEY")
 _ENV_PATH = os.path.join(ROOT, ".env")     # module-level so tests can point elsewhere
+_MAX_KEY_RECHECKS = 5                      # bound the re-check loop — never spin forever
 
 
 def _env_file_keys(path: str) -> set[str]:
@@ -97,23 +98,28 @@ def _keys_gate() -> None:
     print("  • Adzuna  → https://developer.adzuna.com")
     print("  • JSearch → https://rapidapi.com (\"JSearch\") or https://openwebninja.com")
     print("  Keys go in the .env file in this folder — never typed into this tool.\n")
-    while True:
+    # Retry CAP (house rule — no unbounded loops): a user can re-check a few times,
+    # but a driver that always answers "re-check" in a keyless env must TERMINATE,
+    # not spin forever (this exact loop hung CI for 10 minutes before the cap).
+    for _ in range(_MAX_KEY_RECHECKS):
         choice = _select("API keys — what would you like to do?", [
             "I've added them — re-check .env and confirm",
             "Show me how — links + steps, then re-check",
             "Skip — ATS-only (fewer India-native jobs)",
         ])
-        if choice.startswith("Skip"):
+        if choice is None or str(choice).startswith("Skip"):
             print("Skipping keys: discovery runs on the free company-ATS floor only "
                   "(you can add keys to .env any time — no re-setup needed).")
             return
-        if choice.startswith("Show me how"):
+        if str(choice).startswith("Show me how"):
             _print_keys_howto()
         missing = _missing_keys()                    # both non-skip options re-check
         if not missing:
             print("✓ found all keys in .env — India-native channels are on.")
             return
         print(f"Still missing: {', '.join(missing)} — pick again (or Skip).\n")
+    print("Couldn't confirm the keys after several checks — continuing without them "
+          "(ATS-only). Add them to .env any time; no re-setup needed.")
 
 
 def seed_config_files(force: bool = False, skip: tuple = ()) -> list[str]:
