@@ -164,10 +164,21 @@ host model) in this session. No headless model call.
    Present exactly this and end with "Reply with the number." (the user types it in the terminal):
    > What next? Reply with the number:
    >   **1.** Open the full report (`data/results/top.md`)
-   >   **2.** Widen sources — add Adzuna/JSearch keys (`.env`), or enable Apify deep-mode
+   >   **2.** {the STATE-AWARE widen option — see below}
    >   **3.** Adjust target roles / filters (`config/profile.yml`) and re-run
    >   **4.** Check whether a posting is still live (`python -m jobfinder live <job_id>`)
    >   **5.** Done `← (default)`
+
+   **Option 2 is state-aware — never offer adding keys that are already set.** You already know
+   the state from THIS run: `doctor --json` → `discovery_keys` {adzuna, jsearch, apify}, and the
+   `discover` output's per-channel statuses (`no ADZUNA_APP_ID…` reasons), `apify` state, and
+   `quota_remaining`. Pick ONE:
+   - Adzuna/JSearch keys **missing** →
+     "Widen sources — add free Adzuna/JSearch keys (`.env`) for India-native listings"
+   - keys **present** →
+     "Widen sources — raise `scoring.full_score_top_n`, broaden `target_roles`, or enable Apify deep-mode"
+     (drop the Apify clause if `apify` is already `active`; if a keyed channel is
+     quota-exhausted this month, say that instead — more keys won't help until it resets)
 
 **Finally, ALWAYS offer the dashboard — after the results, before you finish.** Ask exactly:
 

@@ -88,7 +88,9 @@ job-finder-india — what would you like to do? Reply with a number:
   5. Help             — what each option does
 ```
 Routing: **1** → `modes/evaluate.md` · **2** → `modes/scan.md` · **3** → re-run
-`evaluate` on the existing `data/results/prescreened.jsonl` · **4** →
+`evaluate` on the existing `data/results/prescreened.jsonl` — but CHECK it exists first:
+if there is no previous run, say so and run a full evaluate (option 1) instead of
+failing on a missing file · **4** →
 `modes/onboarding.md` · **5** → explain the options, then show this menu again.
 
 ## The deterministic tool surface (call via Bash)

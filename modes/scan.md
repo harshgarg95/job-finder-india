@@ -27,7 +27,11 @@ or to sanity-check channel/credit state. This mode never scores.
    bounded set size, then **offer next actions** (numbered, per the `_shared.md` convention):
    > What next? Reply with a number:
    >   **1.** Score these now → evaluate `← (default)`
-   >   **2.** Widen sources — add Adzuna/JSearch keys (`.env`), or enable Apify deep-mode
+   >   **2.** {state-aware widen — from this scan's channel statuses / `doctor --json
+   >          discovery_keys`: keys missing → "Widen sources — add free Adzuna/JSearch keys
+   >          (`.env`) for India-native listings" · keys present → "Widen sources — raise
+   >          `run.yml: max_llm_jobs`, broaden `target_roles`, or enable Apify deep-mode"
+   >          (drop Apify if already `active`; quota-exhausted → say so, keys won't help)}
    >   **3.** Adjust target roles / filters (`config/profile.yml`) and re-scan
    >   **4.** Done
 

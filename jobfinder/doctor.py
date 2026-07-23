@@ -105,10 +105,25 @@ def check() -> dict:
             missing_recommended.append(key)
 
     has_cli = bool(clis) or bool(ollama.get("models"))
+
+    # Which optional discovery keys are configured (.env or environment) — so the
+    # agent's next-step menus can be STATE-AWARE ("add keys" only when keys are
+    # actually missing). Presence only; values are never read into the report.
+    discovery_keys = {"adzuna": False, "jsearch": False, "apify": False}
+    try:
+        from . import onboard as _onb                    # lazy: onboard imports doctor
+        have = _onb._env_file_keys(_onb._ENV_PATH) | {k for k, v in os.environ.items() if v.strip()}
+        discovery_keys = {"adzuna": {"ADZUNA_APP_ID", "ADZUNA_APP_KEY"} <= have,
+                          "jsearch": "JSEARCH_API_KEY" in have,
+                          "apify": "APIFY_TOKEN" in have}
+    except Exception:  # noqa: BLE001 — advisory field; never break the gate over it
+        pass
+
     return {
         "clis": clis,
         "clis_present": [c["id"] for c in clis],
         "ollama": ollama,
+        "discovery_keys": discovery_keys,
         # Scoring runs in-session, so model quality matters — but this is ADVICE the agent
         # relays once and then proceeds. It must NEVER block or wait for a model switch:
         # many plans (Copilot Free/Student) are Auto-only with no picker, so telling the

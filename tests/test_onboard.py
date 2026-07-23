@@ -514,6 +514,31 @@ def test_keys_gate_recheck_loop_is_bounded():
     print("✓ keys-gate re-check loop is capped — terminates keyless (the CI-hang regression)")
 
 
+def test_doctor_reports_discovery_keys_state():
+    """The next-step menus are state-aware via doctor --json → discovery_keys:
+    'add keys' may only be offered when keys are actually missing."""
+    d = _root()
+    saved_path, saved_env = onboard._ENV_PATH, _strip_key_env()
+    saved_apify = os.environ.pop("APIFY_TOKEN", None)
+    try:
+        onboard._ENV_PATH = os.path.join(d, ".env")
+        rep = doctor.check()
+        assert rep["discovery_keys"] == {"adzuna": False, "jsearch": False, "apify": False}
+        open(onboard._ENV_PATH, "w").write("ADZUNA_APP_ID=a\nADZUNA_APP_KEY=b\nJSEARCH_API_KEY=c\n")
+        rep2 = doctor.check()
+        assert rep2["discovery_keys"] == {"adzuna": True, "jsearch": True, "apify": False}
+        os.environ["APIFY_TOKEN"] = "t"                  # environment counts too
+        assert doctor.check()["discovery_keys"]["apify"] is True
+    finally:
+        onboard._ENV_PATH = saved_path
+        _restore_key_env(saved_env)
+        if saved_apify is None:
+            os.environ.pop("APIFY_TOKEN", None)
+        else:
+            os.environ["APIFY_TOKEN"] = saved_apify
+    print("✓ doctor --json reports discovery_keys presence (never values) for state-aware menus")
+
+
 def test_answers_path_surfaces_keys_note():
     import io
     import json
