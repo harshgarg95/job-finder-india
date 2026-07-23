@@ -158,6 +158,31 @@ def test_dashboard_save_failure_is_loud_and_urls_are_scheme_guarded():
     print("✓ failed saves render red + buttons restored; job links are http/https-only")
 
 
+def test_wallclock_from_run_artifacts_never_a_wrong_number():
+    """Regression: a post-scoring `prescreen` re-stamps run_timing for the NEXT
+    run, which made a completed 7-minute run display '<1m'. The wall-clock now
+    derives from the run's OWN files and refuses to guess when they disagree."""
+    import time
+    d = tempfile.mkdtemp(prefix="jf-dash-wc-")
+    D.RESULTS_DIR = d
+    st, sc = os.path.join(d, "score_these.json"), os.path.join(d, "scored.jsonl")
+    # consistent artifacts → the true elapsed (445s), regardless of run_timing state
+    json.dump({"ids": [], "target": 0}, open(st, "w"))
+    open(sc, "w").write("")
+    now = time.time()
+    os.utime(st, (now - 445, now - 445))
+    os.utime(sc, (now, now))
+    assert D._elapsed_secs() == 445
+    # a LATER prescreen rewrote the start file → undeterminable → -1 → the page shows "—"
+    os.utime(st, (now + 60, now + 60))
+    assert D._elapsed_secs() == -1
+    assert 'Run took <b>—</b>' in D.PAGE                 # the never-a-wrong-number branch renders
+    # no artifacts at all → None → segment omitted
+    os.remove(st)
+    assert D._elapsed_secs() is None
+    print("✓ wall-clock: true elapsed from run artifacts; inconsistent → '—'; missing → omitted")
+
+
 def test_dashboard_post_error_returns_400_ok_false():
     import threading
     import urllib.error

@@ -76,16 +76,24 @@ def _quota() -> dict:
 
 
 def _elapsed_secs() -> int | None:
-    """Run wall-clock ≈ scored.jsonl mtime − run start (deterministic, no new store)."""
+    """Run wall-clock derived from the scoring run's OWN artifacts:
+    score_these.json (written at prescreen = run start) → scored.jsonl (last
+    verdict). The run_timing state stamp is deliberately NOT used here — a
+    later `prescreen` re-stamps it for the NEXT run, which made a completed
+    run display "<1m" instead of its true elapsed. Returns:
+      int  — true elapsed, when the artifacts are consistent (start ≤ end)
+      -1   — artifacts inconsistent (a newer prescreen rewrote the start file):
+             the true elapsed cannot be determined → the page shows "—",
+             never a wrong number
+      None — artifacts missing (no run yet) → the segment is omitted"""
     try:
-        from datetime import datetime, timezone
-        from . import state
-        started = state.read("run_timing").get("started_at")
-        sp = _p("scored.jsonl")
-        if not started or not os.path.exists(sp):
+        st, sc = _p("score_these.json"), _p("scored.jsonl")
+        if not (os.path.exists(st) and os.path.exists(sc)):
             return None
-        end = datetime.fromtimestamp(os.path.getmtime(sp), tz=timezone.utc)
-        return max(0, int((end - datetime.fromisoformat(started)).total_seconds()))
+        start, end = os.path.getmtime(st), os.path.getmtime(sc)
+        if start > end:
+            return -1
+        return int(end - start)
     except Exception:  # noqa: BLE001
         return None
 
@@ -275,7 +283,8 @@ function updateHead(d){
    `<span>${fbn} call${fbn==1?"":"s"} saved</span>`;
  const f=d.funnel||{}, q=d.quota||{}, parts=[];
  if(f.candidates!=null) parts.push(`<span>Funnel: <b>${f.candidates}</b> candidates → <b>${f.prescreened}</b> prescreened → <b>${f.scored}</b> scored</span>`);
- if(d.elapsed_secs!=null){const m=Math.round(d.elapsed_secs/60);parts.push(`<span>Run took ~<b>${m<1?"<1":m}m</b></span>`);}
+ if(d.elapsed_secs===-1){parts.push(`<span>Run took <b>—</b></span>`);}  // undeterminable — never a wrong number
+ else if(d.elapsed_secs!=null){const m=Math.round(d.elapsed_secs/60);parts.push(`<span>Run took ~<b>${m<1?"<1":m}m</b></span>`);}
  const qseg=Object.entries(q).map(([k,v])=>`${k} <b>${v.remaining}</b>/${v.cap}`).join(" · ");
  if(qseg) parts.push(`<span>Free-tier left: ${qseg}</span>`);
  document.getElementById("funnel").innerHTML=parts.join("");
