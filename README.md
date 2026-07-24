@@ -94,6 +94,10 @@ calls.** Every run prints the funnel (`candidates → prescreened → scored`) a
   `config/preferences.yml`, `.env`, and everything under `data/` are **gitignored** — never
   committed, never uploaded. The only content that leaves your computer is the job text your own
   AI CLI reads in order to score, under that CLI's terms.
+- **Adzuna job links include your Adzuna app id** as a URL parameter — Adzuna requires it for the
+  link to resolve. If you share raw results (`top.md`, `scored.jsonl`, screenshots) publicly, that
+  id is visible. It is the non-secret half of Adzuna's credential pair; your app key is never
+  written to any file or URL.
 
 Full statement: [NOTICE](NOTICE) · [DATA_CONTRACT.md](DATA_CONTRACT.md).
 

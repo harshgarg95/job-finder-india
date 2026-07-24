@@ -25,4 +25,10 @@ How your data & credentials are handled
    the job text your own AI assistant reads in order to score it, under that
    assistant's terms.
 
+4. A note on Adzuna job links
+   Adzuna job links include your Adzuna app id as a URL parameter — Adzuna requires
+   it for the link to resolve. If you share raw results (top.md, scored.jsonl,
+   screenshots) publicly, that id is visible. It is the non-secret half of Adzuna's
+   credential pair; your app key is never written to any file or URL.
+
 See DATA_CONTRACT.md for the full data contract, and LICENSE for the license (MIT).
