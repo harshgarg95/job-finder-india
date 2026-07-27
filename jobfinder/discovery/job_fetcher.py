@@ -149,11 +149,11 @@ def fetch_full_jd(url: str) -> str | None:
     # ATS-aware branch first: these hosts serve the JD as public keyless JSON,
     # while their rendered pages are empty SPAs over plain HTTP.
     try:
-        if "myworkdayjobs.com" in h:
+        if h == "myworkdayjobs.com" or h.endswith(".myworkdayjobs.com"):
             t = _fetch_workday_jd(url)
             if t:
                 return t[:12000]
-        elif "smartrecruiters.com" in h:
+        elif h == "smartrecruiters.com" or h.endswith(".smartrecruiters.com"):
             t = _fetch_smartrecruiters_jd(url)
             if t:
                 return t[:12000]

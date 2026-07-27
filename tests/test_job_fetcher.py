@@ -128,6 +128,40 @@ def test_dispatch_block_is_a_no_and_failure_falls_through():
     print("✓ dispatch: success skips the page; 403/429 is a 'no' (one attempt); other failures degrade to today's path")
 
 
+def test_ats_host_match_rejects_spoofs_accepts_tenants():
+    """CodeQL py/incomplete-url-substring-sanitization (#4/#5): the ATS branch must
+    match the host by suffix, not substring — a spoof host that merely CONTAINS the
+    brand ('myworkdayjobs.com.evil.test') must NOT route into the JSON-API branch;
+    it falls through to the generic page fetch. Real tenant subdomains still route.
+
+    We spy on the two derivation functions directly (unambiguous: 'did the ATS
+    branch select this host?'), rather than inferring from request URLs."""
+    saved = (JF.requests, JF._fetch_playwright, JF._fetch_workday_jd, JF._fetch_smartrecruiters_jd)
+    routed = {"workday": [], "sr": []}
+    JF._fetch_playwright = lambda url: None
+    JF._fetch_workday_jd = lambda url: routed["workday"].append(url)
+    JF._fetch_smartrecruiters_jd = lambda url: routed["sr"].append(url)
+    JF.requests = _FakeRequests([("", _Resp(404))])          # generic path yields nothing
+    try:
+        # --- spoofs: brand appears but NOT as a real host suffix → must NOT route to either API
+        for spoof in ("https://myworkdayjobs.com.evil.test/careers/job/1",   # brand as prefix of attacker domain
+                      "https://smartrecruiters.com.evil.test/acme/123456",
+                      "https://evilmyworkdayjobs.com/job/1",                  # no dot boundary
+                      "https://notsmartrecruiters.com/acme/123456"):
+            assert JF.fetch_full_jd(spoof) is None
+        assert routed == {"workday": [], "sr": []}, f"a spoof host routed into the ATS branch: {routed}"
+
+        # --- legitimate tenants: MUST still route into the JSON-API branch
+        JF._fetch_workday_jd = lambda url: (routed["workday"].append(url) or "WD JD text " * 80)
+        JF._fetch_smartrecruiters_jd = lambda url: (routed["sr"].append(url) or "SR JD text " * 80)
+        assert "WD JD text" in (JF.fetch_full_jd("https://genpact.myworkdayjobs.com/EC/job/City/Role_JR1") or "")
+        assert "SR JD text" in (JF.fetch_full_jd("https://jobs.smartrecruiters.com/Acme/123456789") or "")
+        assert len(routed["workday"]) == 1 and len(routed["sr"]) == 1     # each real tenant routed once
+    finally:
+        JF.requests, JF._fetch_playwright, JF._fetch_workday_jd, JF._fetch_smartrecruiters_jd = saved
+    print("✓ ATS host match is suffix-based: brand-substring spoofs fall through; real tenants route")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
