@@ -48,6 +48,7 @@ Free-tier cost of the daily run: ~30 Adzuna + ~30 JSearch requests/month
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -210,22 +211,11 @@ def decide(status_by_channel: dict) -> tuple[bool, list[str]]:
       • ALL attempted keyed channels degraded at once (both WARN/FAIL) — that is an
         outage, not a single-channel blip.
 
-    Decision #2 — PERSISTENCE ESCALATION (WARN that recurs across N consecutive
-    scheduled runs → FAIL, so a WARN can't permanently blind us): NOT implemented
-    here, deliberately. It needs state carried ACROSS CI invocations (each run is a
-    fresh, memoryless runner). The clean way is a tiny JSON of per-channel
-    consecutive-WARN counters kept in the GitHub Actions cache (or an artifact),
-    restored before the smoke step and saved after — ~6 lines in
-    discovery-smoke.yml. That workflow file is OUTSIDE this change's approved scope,
-    so persistence is a tightly-scoped FOLLOW-UP (propose N=3). Rejected
-    alternatives: committing state to the repo (needs write perms + pollutes
-    history); polling the GitHub API for prior-run detail at smoke time (fragile,
-    unauth rate limits, WARN-passing runs report 'success' so the condition isn't
-    recoverable from conclusions alone); within-run re-polling (would NOT have
-    separated the 08 Aug empty-results — transient but sustained for hours — from
-    real drift, so it doesn't serve the goal). Until persistence lands, a WARN still
-    prints a visible ::warning + a summary row every run, so a persistent
-    degradation shows as a persistent yellow — not silent, just not an email.
+    decide() is the SINGLE-RUN verdict. The PERSISTENCE ESCALATION (a WARN that
+    recurs across N consecutive scheduled runs → FAIL, so a persistently dead
+    channel can't hide as daily weather) is layered ON TOP in main() via
+    load_counters/update_counters/escalations — it only ADDS FAILs to what decide()
+    already returns, never softens a guardrail.
     """
     reasons: list[str] = []
     if status_by_channel.get("ats") == "FAIL":
@@ -238,6 +228,80 @@ def decide(status_by_channel: dict) -> tuple[bool, list[str]]:
     if len(attempted) >= 2 and all(s in ("WARN", "FAIL") for s in attempted):
         reasons.append("all keyed channels degraded at once — upstream outage, not a single-channel blip")
     return bool(reasons), reasons
+
+
+# ── persistence: escalate a WARN that recurs across N consecutive scheduled runs ─
+# A single transient WARN is weather (passes). But a channel that WARNs every day
+# is a channel that is persistently dead/degraded, masquerading as weather — the
+# gap decide() alone can't close. Cross-run state is carried in a tiny per-channel
+# counter file (the workflow keeps it in the GitHub Actions cache). Enabled ONLY
+# when SMOKE_STATE_FILE is set (scheduled CI runs); local runs and manual dispatch
+# leave it unset → persistence off, single-run behavior unchanged.
+PERSIST_THRESHOLD = 3             # a channel WARNing this many scheduled runs running → FAIL
+_RESET_STATES = ("OK", "QUOTA")   # a healthy / expected state clears the channel's WARN streak
+
+
+def load_counters(path: str | None) -> tuple[dict, str]:
+    """Read per-channel consecutive-WARN counters → (counters, note). A missing
+    file (cold cache / first run) or a corrupt/unreadable one BOTH yield zeroed
+    counters: persistence bookkeeping must NEVER hard-fail the canary itself."""
+    zero = {ch: 0 for ch in KEYED_CHANNELS}
+    if not path or not os.path.exists(path):
+        return zero, "cold"
+    try:
+        raw = json.load(open(path, encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError("state file is not a JSON object")
+        out = {}
+        for ch in KEYED_CHANNELS:
+            try:
+                out[ch] = max(0, int(raw.get(ch, 0)))
+            except (TypeError, ValueError):
+                out[ch] = 0            # a corrupt individual value → 0, don't fail
+        return out, "ok"
+    except Exception as e:             # noqa: BLE001 — never fail on bookkeeping
+        return zero, f"corrupt: {e}"
+
+
+def update_counters(counters: dict, status_by_channel: dict) -> dict:
+    """Per-CHANNEL (not per-condition) streak update: ANY WARN flavor increments;
+    a healthy/expected state (OK / QUOTA) resets to 0; SKIP / FAIL leave it
+    unchanged (no clean WARN signal). Per-channel by design — a channel that flaps
+    between degraded flavors (5xx → empty → timeout) has still delivered no usable
+    data, so it must keep accumulating rather than reset when the flavor changes."""
+    out = dict(counters)
+    for ch in KEYED_CHANNELS:
+        st = status_by_channel.get(ch)
+        if st == "WARN":
+            out[ch] = int(out.get(ch, 0)) + 1
+        elif st in _RESET_STATES:
+            out[ch] = 0
+    return out
+
+
+def escalations(counters: dict, threshold: int = PERSIST_THRESHOLD) -> list[str]:
+    """FAIL reasons for channels whose consecutive-WARN streak has reached N."""
+    reasons = []
+    for ch in KEYED_CHANNELS:
+        n = int(counters.get(ch, 0))
+        if n >= threshold:
+            reasons.append(f"{ch} has WARNed for {n} consecutive scheduled runs (>= {threshold}) — "
+                           "escalating to FAIL: a persistently degraded/dead channel, not weather")
+    return reasons
+
+
+def save_counters(path: str | None, counters: dict) -> None:
+    """Best-effort persist. A write failure is annotated, never fatal."""
+    if not path:
+        return
+    try:
+        d = os.path.dirname(path)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({ch: int(counters.get(ch, 0)) for ch in KEYED_CHANNELS}, f)
+    except Exception as e:             # noqa: BLE001 — bookkeeping must not fail the run
+        print(f"::warning title=discovery-smoke::could not save persistence counters: {e}")
 
 
 def main() -> int:
@@ -253,7 +317,26 @@ def main() -> int:
             for r in results:
                 f.write(f"| {r['channel']} | {r['status']} | {r['detail'][:300]} |\n")
 
-    fail, reasons = decide({r["channel"]: r["status"] for r in results})
+    status_by = {r["channel"]: r["status"] for r in results}
+    fail, reasons = decide(status_by)
+
+    # Persistence escalation — only on scheduled CI runs (SMOKE_STATE_FILE set by
+    # the workflow; unset for local runs + manual dispatch, so those never perturb
+    # the streak). Only ADDS FAILs; never softens a decide() guardrail.
+    persist_path = os.environ.get("SMOKE_STATE_FILE")
+    if persist_path:
+        counters, note = load_counters(persist_path)
+        if note.startswith("corrupt"):
+            print(f"::warning title=discovery-smoke::persistence counters unreadable ({note}) — treated as 0")
+        counters = update_counters(counters, status_by)
+        esc = escalations(counters)
+        reasons += esc
+        if esc:
+            fail = True
+        save_counters(persist_path, counters)
+        print("persistence streaks (consecutive WARNs): "
+              + ", ".join(f"{ch}={counters.get(ch, 0)}" for ch in KEYED_CHANNELS))
+
     for reason in reasons:
         print(f"::error title=discovery-smoke::{reason}")
 

@@ -68,9 +68,37 @@ jobs:
           print("doctor missing:", missing or "none (setup files complete)")
           sys.exit(1 if missing else 0)'
 
+      # Persistence backstop: a per-channel consecutive-WARN counter carried across
+      # runs in the Actions cache, so a channel that WARNs for 3 scheduled runs
+      # running escalates to a hard FAIL (a persistently dead channel can't hide as
+      # daily weather). SCHEDULED runs only — manual dispatch/local runs don't touch
+      # the streak. The cache is immutable per key, so we ROTATE the key per run and
+      # restore the most-recent via the restore-keys prefix (the standard
+      # mutable-state-in-cache idiom); a cold cache = counters start at 0.
+      - name: Restore persistence counters
+        if: github.event_name == 'schedule'
+        uses: actions/cache/restore@v4
+        with:
+          path: .smoke-state
+          key: discovery-smoke-state-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            discovery-smoke-state-
+
       - name: Discovery smoke (1 real request per keyed channel)
         env:
           ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
           ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
           JSEARCH_API_KEY: ${{ secrets.JSEARCH_API_KEY }}
+          # Set only for scheduled runs → persistence active; empty on manual
+          # dispatch → the script leaves the streak untouched.
+          SMOKE_STATE_FILE: ${{ github.event_name == 'schedule' && '.smoke-state/counters.json' || '' }}
         run: python scripts/discovery_smoke.py
+
+      # Save even when the smoke step FAILED (always()), so an escalated/red run
+      # still records the streak for the next day's comparison.
+      - name: Save persistence counters
+        if: ${{ always() && github.event_name == 'schedule' }}
+        uses: actions/cache/save@v4
+        with:
+          path: .smoke-state
+          key: discovery-smoke-state-${{ github.run_id }}-${{ github.run_attempt }}
