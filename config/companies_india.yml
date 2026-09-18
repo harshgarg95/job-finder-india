@@ -22,9 +22,12 @@ companies:
 
   # ── Greenhouse / Ashby / Lever / SmartRecruiters (public, keyless) ──────────
   - { company: "Freshworks",    ats: smartrecruiters, slug: Freshworks, india_hq: true }   # 101 postings
-  - { company: "Postman",       ats: greenhouse, slug: postman }
-  - { company: "PhonePe",       ats: greenhouse, slug: phonepe, india_hq: true }
-  - { company: "Observe.AI",    ats: greenhouse, slug: observeai, india_hq: true }
+  # Postman + PhonePe left Greenhouse (both slugs 404 as of 2026-09-18 — no rename
+  # found; verified the Greenhouse API itself is healthy). Replaced with live
+  # India-relevant boards to keep the family ≥2-deep for the smoke's fallback.
+  - { company: "Groww",         ats: greenhouse, slug: groww,      india_hq: true }   # verified 2026-09-18: 200 · 8 jobs · 8 India
+  - { company: "HackerRank",    ats: greenhouse, slug: hackerrank }                   # verified 2026-09-18: 200 · 27 jobs · 16 India
+  - { company: "Observe.AI",    ats: greenhouse, slug: observeai, india_hq: true }    # verified 2026-09-18: 200 (still live)
   - { company: "Tiger Analytics", ats: ashby,    slug: tiger, india_hq: true }
   - { company: "Sarvam AI",     ats: ashby,      slug: sarvam, india_hq: true }
   - { company: "Meesho",        ats: lever,      slug: meesho, india_hq: true }
