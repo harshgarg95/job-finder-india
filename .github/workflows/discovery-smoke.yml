@@ -77,7 +77,7 @@ jobs:
       # mutable-state-in-cache idiom); a cold cache = counters start at 0.
       - name: Restore persistence counters
         if: github.event_name == 'schedule'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: .smoke-state
           key: discovery-smoke-state-${{ github.run_id }}-${{ github.run_attempt }}
@@ -98,7 +98,7 @@ jobs:
       # still records the streak for the next day's comparison.
       - name: Save persistence counters
         if: ${{ always() && github.event_name == 'schedule' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: .smoke-state
           key: discovery-smoke-state-${{ github.run_id }}-${{ github.run_attempt }}
