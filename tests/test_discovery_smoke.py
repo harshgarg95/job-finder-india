@@ -172,10 +172,10 @@ def test_persistence_flapping_flavors_still_escalate():
 
 def test_persistence_cold_cache_no_crash():
     counters, note = smoke.load_counters("/nonexistent/dir/counters.json")
-    assert note == "cold" and counters == {"adzuna": 0, "jsearch": 0}
+    assert note == "cold" and counters == {"ats": 0, "adzuna": 0, "jsearch": 0}
     assert smoke.escalations(counters) == []
     counters, note = smoke.load_counters(None)               # persistence disabled path
-    assert note == "cold" and counters == {"adzuna": 0, "jsearch": 0}
+    assert note == "cold" and counters == {"ats": 0, "adzuna": 0, "jsearch": 0}
     print("✓ cold cache / no state file → counters 0, no crash")
 
 
@@ -184,10 +184,10 @@ def test_persistence_corrupt_state_treated_as_zero():
     p = os.path.join(tempfile.mkdtemp(), "counters.json")
     open(p, "w").write("{ this is not json")
     counters, note = smoke.load_counters(p)
-    assert note.startswith("corrupt") and counters == {"adzuna": 0, "jsearch": 0}
+    assert note.startswith("corrupt") and counters == {"ats": 0, "adzuna": 0, "jsearch": 0}
     open(p, "w").write('{"jsearch": "notanint", "adzuna": 5}')  # one corrupt value
     counters, note = smoke.load_counters(p)
-    assert counters == {"adzuna": 5, "jsearch": 0} and note == "ok"
+    assert counters == {"ats": 0, "adzuna": 5, "jsearch": 0} and note == "ok"
     print("✓ corrupt state file / value → treated as 0, never hard-fails the canary")
 
 
@@ -196,7 +196,7 @@ def test_persistence_save_load_roundtrip_creates_dir():
     p = os.path.join(tempfile.mkdtemp(), "nested", "counters.json")
     smoke.save_counters(p, {"adzuna": 1, "jsearch": 2})       # nested dir must be created
     counters, note = smoke.load_counters(p)
-    assert note == "ok" and counters == {"adzuna": 1, "jsearch": 2}
+    assert note == "ok" and counters == {"ats": 0, "adzuna": 1, "jsearch": 2}
     print("✓ save creates the dir + round-trips through load")
 
 
@@ -205,6 +205,60 @@ def test_persistence_never_softens_ats_fail():
     fail, _ = smoke.decide({"ats": "FAIL", "adzuna": "WARN", "jsearch": "OK"})
     assert fail is True
     print("✓ ats-fail still hard-FAILs immediately regardless of counters")
+
+
+# ── ats floor: transient family weather WARNs-and-passes; total outage FAILs ──
+def test_ats_transient_family_blip_warns_not_fails():
+    # Nov 16 (workday 429) and Nov 17 (lever 500): one family transiently errors
+    # while the floor still produces jobs → WARN (passes), not the old hard FAIL.
+    for fam, err in (("workday", "Genpact(workday:genpact): 429 Client Error: Too Many Requests for url: x"),
+                     ("lever", "Meesho(lever:meesho): 500 Server Error: Internal Server Error for url: x")):
+        status, detail = smoke.classify_ats(["greenhouse:groww 8 jobs", "ashby:tiger 4 jobs"],
+                                             [(fam, smoke._is_transient([err]), err[:80])])
+        assert status == "WARN" and "transient weather" in detail, (fam, status)
+    print("✓ a single ATS family on a transient 429/500 while the floor works → WARN/pass (fixes Nov 16/17)")
+
+
+def test_ats_stale_tenants_warn_then_persistence_escalates():
+    # Sep class: a family whose tenants all 404 (stale) while others work → WARN
+    # this run (hard, not transient), and the ats streak escalates if it sticks.
+    err = "Postman(greenhouse:postman): 404 Client Error: Not Found for url: x"
+    status, detail = smoke.classify_ats(["workday:genpact 20 jobs"],
+                                        [("greenhouse", smoke._is_transient([err]), err[:80])])
+    assert status == "WARN" and "stale tenants or drift" in detail
+    c = {}
+    for _ in range(3):                                   # 3 consecutive scheduled runs degraded
+        c = smoke.update_counters(c, {"ats": "WARN", "adzuna": "OK", "jsearch": "OK"})
+    assert c["ats"] == 3 and any("ats" in r for r in smoke.escalations(c))
+    print("✓ stale-tenant family → WARN; ats WARN×3 escalates to FAIL (real rot still paged, after grace)")
+
+
+def test_ats_total_floor_down_fails_immediately():
+    # ZERO families produce jobs → the floor is genuinely down → hard FAIL now.
+    status, detail = smoke.classify_ats([], [("workday", True, "429"), ("lever", True, "500"),
+                                             ("greenhouse", True, "503")])
+    assert status == "FAIL" and "floor is DOWN" in detail
+    fail, reasons = smoke.decide({"ats": "FAIL", "adzuna": "OK", "jsearch": "OK"})
+    assert fail is True and any("fully down" in r for r in reasons)
+    print("✓ no family produces jobs → ats FAIL, run pages immediately (floor-down signal preserved)")
+
+
+def test_ats_all_families_healthy_is_ok():
+    status, detail = smoke.classify_ats(["greenhouse:groww 8 jobs", "lever:meesho 47 jobs"], [])
+    assert status == "OK" and "groww" in detail
+    print("✓ all ATS families healthy → OK")
+
+
+def test_is_transient_both_error_spellings():
+    # ATS provider spelling ('429 Client Error') AND keyed spelling ('HTTP 503')
+    assert smoke._is_transient(["x: 429 Client Error: Too Many Requests"]) is True
+    assert smoke._is_transient(["x: 500 Server Error: Internal Server Error"]) is True
+    assert smoke._is_transient(["HTTP 503 bad gateway"]) is True
+    assert smoke._is_transient(["x: 404 Client Error: Not Found"]) is False   # stale/drift, not weather
+    assert smoke._is_transient(["x: 403 Client Error: Forbidden"]) is False
+    assert smoke._is_transient(["'q': timeout"]) is True
+    assert smoke._is_transient(["0 well-formed postings (shape drift?)"]) is False
+    print("✓ _is_transient handles both HTTP-status spellings; 429/5xx/timeout transient, 4xx/shape not")
 
 
 if __name__ == "__main__":

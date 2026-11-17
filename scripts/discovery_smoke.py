@@ -8,9 +8,13 @@ silently degrades to fewer channels.
 
 What it does, per channel — the minimum real traffic that proves the shape:
   • ats     — for EACH ATS family in config/companies_india.yml (greenhouse,
-              lever, ashby, smartrecruiters, workday) fetch ONE tenant board
-              through the production AtsProvider path (2nd tenant only as
-              fallback). A family fails only if every tried tenant fails.
+              lever, ashby, smartrecruiters, workday) fetch tenant boards through
+              the production AtsProvider path, trying up to TENANTS_PER_FAMILY and
+              stopping at the first live one. A family is "degraded" only if every
+              tried tenant fails; the floor WARNs-and-passes while at least one
+              family still produces jobs (a transient blip or a stale tenant is
+              weather, not a floor outage) and FAILs only if NO family produces
+              jobs. See classify_ats().
   • adzuna  — ONE search request (max_requests_per_run forced to 1).
   • jsearch — ONE search request (same). Keyed channels are exercised whenever
               their key is present, regardless of config/sources.yml opt-ins —
@@ -27,21 +31,25 @@ Statuses:
   SKIP  — API key not configured (repo secret missing)     (warning, pass)
   QUOTA — provider free tier exhausted / rate-limited      (warning, pass —
           real-tier exhaustion is not API drift)
-  WARN  — transient upstream WEATHER on ONE keyed channel  (warning, pass) —
-          a 5xx, a timeout / connection error, or a 200 that parsed but gave
-          empty/degraded data. Not our code, not drift. See classify_keyed().
+  WARN  — transient upstream WEATHER on ONE channel          (warning, pass) —
+          a keyed channel 5xx / timeout / empty-degraded data (classify_keyed),
+          OR a single degraded ATS family while the floor still produces jobs
+          (classify_ats). Not our code, not drift.
   FAIL  — real breakage: exit 1 → GitHub's failure email.
 
 WARN vs FAIL policy (why the canary stopped crying wolf): the daily smoke kept
-hard-failing on transient paid-API hiccups (jsearch empty-location 27 Jul, jsearch
-empty-results 08 Aug, adzuna 503 13 Aug, jsearch empty-location again 13 Aug) while
-`ats` — the keyless floor — passed every time. Those are third-party weather, not
-drift. So a SINGLE keyed channel hitting a transient condition (5xx / empty data)
-while ats is healthy now WARNs and the run PASSES. The signals we cannot lose still
-hard-FAIL (see decide()): ats down, ALL keyed channels down at once, any 4xx/parse
-error (auth/404/drift). Persistence escalation (a WARN that recurs across N daily
-runs → FAIL) is the intended backstop but needs cross-run state — see the note in
-decide(); it is a follow-up that touches the workflow file, out of THIS change.
+hard-failing on transient third-party hiccups. First the KEYED channels (jsearch
+empty-location 27 Jul, jsearch empty-results 08 Aug, adzuna 503 13 Aug) — softened
+so a single keyed blip WARNs and passes. Then the ATS FLOOR itself kept doing the
+same thing (greenhouse stale tenants 17 Sep, workday 429 16 Nov, lever 500 17 Nov)
+because smoke_ats hard-failed on ANY family error, transient or not. So now the ats
+floor gets the SAME treatment: a single family hitting transient weather (429/5xx/
+timeout) or going stale, while another family still returns jobs, WARNs and passes.
+The signals we cannot lose still hard-FAIL (see decide()): the ENTIRE ats floor
+down (no family produces jobs), ALL keyed channels down at once, any keyed 4xx/
+parse error. Persistence escalation (a WARN on the SAME channel — ats included —
+across PERSIST_THRESHOLD consecutive scheduled runs → FAIL) is the backstop that
+turns a *persistently* degraded family/channel back into a red email.
 
 Free-tier cost of the daily run: ~30 Adzuna + ~30 JSearch requests/month
 (of ~250 and ~200 free) + a handful of keyless ATS calls. No Apify, no SerpAPI.
@@ -70,15 +78,44 @@ QUERY = Query(titles=["software engineer"], location="India", limit_per_channel=
 # Force exactly ONE request per keyed channel (the whole point of a smoke).
 CFG = {"run": {"discovery": {"adzuna": {"max_requests_per_run": 1},
                              "jsearch": {"max_requests_per_run": 1}}}}
-TENANTS_PER_FAMILY = 2          # 2nd tenant is a fallback, tried only if the 1st fails
+TENANTS_PER_FAMILY = 3          # try up to this many per family, stop at the first live tenant
 WORKDAY_SMOKE_LIMIT = 20        # don't pull a 150-job board for a shape check
 
 results: list[dict] = []        # {channel, status, detail}
+
+# Transient-upstream markers, shared by the ats floor and the keyed channels:
+# an HTTP 429 or 5xx, or a transport error (timeout / connection, no HTTP response).
+# Two HTTP-status spellings: "HTTP 429" (the keyed providers) and "429 Client Error"
+# / "500 Server Error" (the ATS provider, via requests' raise_for_status()).
+_HTTP_CODE_RE = re.compile(r"HTTP\s+(\d{3})|\b(\d{3})\s+(?:Client|Server)\s+Error", re.I)
+_TRANSIENT_NET_RE = re.compile(
+    r"timed?\s*out|timeout|connection|max retries|failed to establish|getaddrinfo|"
+    r"name or service not known|temporary failure in name resolution|network is unreachable",
+    re.I)
 
 
 def well_formed(jobs: list) -> list:
     return [j for j in jobs if (j.title or "").strip() and (j.url or "").strip()
             and (j.company or "").strip()]
+
+
+def _http_codes(text: str) -> list:
+    """Every HTTP status code in an error string, in either spelling."""
+    return [int(m.group(1) or m.group(2)) for m in _HTTP_CODE_RE.finditer(text or "")]
+
+
+def _is_transient(errors: list) -> bool:
+    """True when the error(s) are transient upstream WEATHER: an HTTP 429 or 5xx,
+    or a transport error (timeout / connection) with no HTTP response. False for a
+    4xx other than 429 (auth / 404 → stale tenant or endpoint drift), a parse
+    error, or an empty / shape-drift result. When an HTTP status is present it
+    decides (not body text — a 4xx page could contain the word 'timeout'); the
+    transport markers apply only when there is no HTTP status."""
+    joined = "; ".join(errors or [])
+    codes = [c for e in (errors or []) for c in _http_codes(e)]
+    if codes:
+        return all(c == 429 or 500 <= c <= 599 for c in codes)
+    return bool(_TRANSIENT_NET_RE.search(joined))
 
 
 def record(channel: str, status: str, detail: str) -> None:
@@ -91,7 +128,33 @@ def record(channel: str, status: str, detail: str) -> None:
         print(f"::warning title=discovery-smoke {channel}::{detail}")
 
 
-# ── ats: one tenant per family through the production provider path ──────────
+# ── ats: the keyless floor — a family is OK if ANY tenant returns jobs ────────
+def classify_ats(healthy: list, degraded: list) -> tuple[str, str]:
+    """Verdict for the keyless ATS floor from per-family outcomes.
+      healthy  — ["greenhouse:groww 8 jobs", ...] families that produced jobs.
+      degraded — [(family, is_transient, err), ...] families where EVERY tried
+                 tenant failed.
+    The floor's job is to prove keyless discovery still produces jobs, so:
+      • no degraded families                     → OK
+      • some degraded but >= 1 healthy family     → WARN — the floor still works;
+          a subset blipped (transient) or went stale. Passes this run; persistence
+          escalates a family that stays degraded for PERSIST_THRESHOLD runs.
+      • ZERO healthy families (nothing anywhere)  → FAIL — the floor is genuinely
+          down (network / systemic). Pages immediately.
+    This mirrors the keyed channels. Before it, ANY single family erroring — incl.
+    a transient 429/500 — hard-failed the whole canary; that was the recurring
+    false alarm (workday 429, lever 500, greenhouse stale tenants) this closes."""
+    if not degraded:
+        return "OK", " · ".join(healthy)
+    deg = " · ".join(
+        f"{fam} ({'transient weather' if tr else 'hard — stale tenants or drift'}: {err})"
+        for fam, tr, err in degraded)
+    if not healthy:
+        return "FAIL", "ALL ATS families failed — keyless discovery floor is DOWN: " + deg
+    return "WARN", (f"floor healthy ({' · '.join(healthy)}); degraded: {deg} — still producing "
+                    "jobs, passes as weather (persistence escalates if a family stays degraded)")
+
+
 def smoke_ats() -> None:
     path = os.path.join(ROOT, "config", "companies_india.yml")
     tenants = (yaml.safe_load(open(path, encoding="utf-8")) or {}).get("companies") or []
@@ -102,38 +165,28 @@ def smoke_ats() -> None:
         record("ats", "FAIL", f"no tenants parsed from {path} — file moved or shape changed")
         return
 
-    broken: list[str] = []
-    detail: list[str] = []
+    healthy: list[str] = []
+    degraded: list[tuple] = []
     for fam in sorted(families):
         fam_ok = False
         errs: list[str] = []
-        for t in families[fam][:TENANTS_PER_FAMILY]:
-            t = {**t, "limit": min(int(t.get("limit", WORKDAY_SMOKE_LIMIT)), WORKDAY_SMOKE_LIMIT)}
-            p = AtsProvider([t])
+        for t in families[fam][:TENANTS_PER_FAMILY]:   # try up to N, stop at the first live tenant
+            tt = {**t, "limit": min(int(t.get("limit", WORKDAY_SMOKE_LIMIT)), WORKDAY_SMOKE_LIMIT)}
+            p = AtsProvider([tt])
             jobs = well_formed(p.fetch(QUERY, {}))
             if jobs and not p.last_errors:
-                detail.append(f"{fam}:{t['slug']} {len(jobs)} jobs")
+                healthy.append(f"{fam}:{tt['slug']} {len(jobs)} jobs")
                 fam_ok = True
-                break                      # family proven — don't spend the fallback call
-            errs.append(f"{t['slug']}: " + ("; ".join(p.last_errors) if p.last_errors
-                        else "0 well-formed postings (shape drift?)"))
+                break                      # family proven by one live tenant
+            errs.extend(p.last_errors or [f"{tt['slug']}: 0 well-formed postings (shape drift?)"])
         if not fam_ok:
-            broken.append(f"{fam} [{' | '.join(errs)}]")
-    if broken:
-        record("ats", "FAIL", "family broken: " + " · ".join(broken))
-    else:
-        record("ats", "OK", " · ".join(detail))
+            degraded.append((fam, _is_transient(errs), "; ".join(errs)[:180]))
+    status, detail = classify_ats(healthy, degraded)
+    record("ats", status, detail)
 
 
 # ── keyed channels: classify one channel's result, WARN weather vs FAIL breakage ─
 KEYED_CHANNELS = ("adzuna", "jsearch")
-_HTTP_CODE_RE = re.compile(r"HTTP\s+(\d{3})")
-# Transport-level failures with NO HTTP response — timeouts and connection errors
-# (DNS / refused / reset / 'Max retries exceeded'). Same weather class as a 5xx.
-_TRANSIENT_NET_RE = re.compile(
-    r"timed?\s*out|timeout|connection|max retries|failed to establish|getaddrinfo|"
-    r"name or service not known|temporary failure in name resolution|network is unreachable",
-    re.I)
 
 
 def classify_keyed(name: str, jobs: list, errors: list) -> tuple[str, str]:
@@ -173,7 +226,7 @@ def classify_keyed(name: str, jobs: list, errors: list) -> tuple[str, str]:
         return "QUOTA", "free tier exhausted / rate-limited — not API drift; " + "; ".join(errors)
     if errors:
         joined = "; ".join(errors)
-        codes = [int(m.group(1)) for e in errors for m in [_HTTP_CODE_RE.search(e)] if m]
+        codes = [c for e in errors for c in _http_codes(e)]
         if codes:                                  # an HTTP response arrived → the status decides
             if all(500 <= c <= 599 for c in codes):
                 return "WARN", "transient upstream error (HTTP 5xx) — weather, passes; " + joined
@@ -219,7 +272,7 @@ def decide(status_by_channel: dict) -> tuple[bool, list[str]]:
     """
     reasons: list[str] = []
     if status_by_channel.get("ats") == "FAIL":
-        reasons.append("ats (the keyless discovery floor) hard-failed — paging loudly")
+        reasons.append("ats (the keyless discovery floor) is fully down — no family produced jobs — paging loudly")
     for ch in KEYED_CHANNELS:
         if status_by_channel.get(ch) == "FAIL":
             reasons.append(f"{ch} hard-failed (4xx / parse error — secrets or real drift)")
@@ -239,13 +292,16 @@ def decide(status_by_channel: dict) -> tuple[bool, list[str]]:
 # leave it unset → persistence off, single-run behavior unchanged.
 PERSIST_THRESHOLD = 3             # a channel WARNing this many scheduled runs running → FAIL
 _RESET_STATES = ("OK", "QUOTA")   # a healthy / expected state clears the channel's WARN streak
+# ats is tracked too: a family that stays degraded day after day (real rot/drift,
+# not a blip) escalates to a red email, just like a persistently degraded keyed channel.
+PERSIST_CHANNELS = ("ats",) + KEYED_CHANNELS
 
 
 def load_counters(path: str | None) -> tuple[dict, str]:
     """Read per-channel consecutive-WARN counters → (counters, note). A missing
     file (cold cache / first run) or a corrupt/unreadable one BOTH yield zeroed
     counters: persistence bookkeeping must NEVER hard-fail the canary itself."""
-    zero = {ch: 0 for ch in KEYED_CHANNELS}
+    zero = {ch: 0 for ch in PERSIST_CHANNELS}
     if not path or not os.path.exists(path):
         return zero, "cold"
     try:
@@ -253,7 +309,7 @@ def load_counters(path: str | None) -> tuple[dict, str]:
         if not isinstance(raw, dict):
             raise ValueError("state file is not a JSON object")
         out = {}
-        for ch in KEYED_CHANNELS:
+        for ch in PERSIST_CHANNELS:
             try:
                 out[ch] = max(0, int(raw.get(ch, 0)))
             except (TypeError, ValueError):
@@ -270,7 +326,7 @@ def update_counters(counters: dict, status_by_channel: dict) -> dict:
     between degraded flavors (5xx → empty → timeout) has still delivered no usable
     data, so it must keep accumulating rather than reset when the flavor changes."""
     out = dict(counters)
-    for ch in KEYED_CHANNELS:
+    for ch in PERSIST_CHANNELS:
         st = status_by_channel.get(ch)
         if st == "WARN":
             out[ch] = int(out.get(ch, 0)) + 1
@@ -282,7 +338,7 @@ def update_counters(counters: dict, status_by_channel: dict) -> dict:
 def escalations(counters: dict, threshold: int = PERSIST_THRESHOLD) -> list[str]:
     """FAIL reasons for channels whose consecutive-WARN streak has reached N."""
     reasons = []
-    for ch in KEYED_CHANNELS:
+    for ch in PERSIST_CHANNELS:
         n = int(counters.get(ch, 0))
         if n >= threshold:
             reasons.append(f"{ch} has WARNed for {n} consecutive scheduled runs (>= {threshold}) — "
@@ -299,7 +355,7 @@ def save_counters(path: str | None, counters: dict) -> None:
         if d:
             os.makedirs(d, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
-            json.dump({ch: int(counters.get(ch, 0)) for ch in KEYED_CHANNELS}, f)
+            json.dump({ch: int(counters.get(ch, 0)) for ch in PERSIST_CHANNELS}, f)
     except Exception as e:             # noqa: BLE001 — bookkeeping must not fail the run
         print(f"::warning title=discovery-smoke::could not save persistence counters: {e}")
 
@@ -335,7 +391,7 @@ def main() -> int:
             fail = True
         save_counters(persist_path, counters)
         print("persistence streaks (consecutive WARNs): "
-              + ", ".join(f"{ch}={counters.get(ch, 0)}" for ch in KEYED_CHANNELS))
+              + ", ".join(f"{ch}={counters.get(ch, 0)}" for ch in PERSIST_CHANNELS))
 
     for reason in reasons:
         print(f"::error title=discovery-smoke::{reason}")
@@ -345,7 +401,8 @@ def main() -> int:
     print(f"\n{verdict}: {tally['OK']} ok · {tally['WARN']} warn · {tally['SKIP']} skipped · "
           f"{tally['QUOTA']} quota · {tally['FAIL']} failed")
     if tally["WARN"] and not fail:
-        print("  (WARN = transient upstream weather on a single keyed channel; ats floor healthy → not paging)")
+        print("  (WARN = transient upstream weather on a single channel — keyed blip, or one ATS family "
+              "degraded while the floor still produces jobs → not paging; persistence escalates if it sticks)")
     return 1 if fail else 0
 
 
